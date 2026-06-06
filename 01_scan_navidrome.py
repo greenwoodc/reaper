@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 """
-Rock 2000 — Phase 1: Scan Navidrome
-Reads the Spotify export CSV, searches Navidrome via the Subsonic API,
-and produces:
-  found_tracks.json          — Navidrome song IDs for playlist creation
-  config/missing_tracks.csv  — songs to download via slsk-batchdl
+Reaper — Phase 1: Scan Navidrome
+Reads an Exportify CSV, searches Navidrome via the Subsonic API,
+and produces per-playlist output files:
+  playlists/<slug>/found_tracks.json    — Navidrome song IDs for playlist creation
+  playlists/<slug>/missing_tracks.csv  — songs to download via slsk-batchdl
 
 Usage:
-  python3 01_scan_navidrome.py             # normal run
-  python3 01_scan_navidrome.py --dry-run   # preview changes, no files written
+  python3 01_scan.py --csv my_playlist.csv
+  python3 01_scan.py --csv my_playlist.csv --name "My Playlist"
+  python3 01_scan.py --csv my_playlist.csv --rank-col "Position"
+  python3 01_scan.py --csv my_playlist.csv --dry-run
 """
 
 import argparse
@@ -24,60 +26,99 @@ from pathlib import Path
 from urllib import request, parse
 from urllib.error import URLError
 
-# ── CONFIG ───────────────────────────────────────────────────────────────────
-NAVIDROME_URL   = "http://100.92.200.19:4533/"
-ND_USER         = "admin"
-ND_PASSWORD     = "xGdADq3Vt9uUFX"
-ND_CLIENT       = "rock2000scanner"
-ND_VERSION      = "1.16.1"
+try:
+    import yaml
+except ImportError:
+    yaml = None
 
-CSV_FILE        = "The_Rock_2000__2025_.csv"
-FOUND_FILE      = "found_tracks.json"
-MISSING_FILE    = "config/missing_tracks.csv"
+# ── CONFIG ────────────────────────────────────────────────────────────────────
+CONFIG_FILE = "config.yml"
 
-# Fuzzy match threshold 0.0–1.0.
-# 0.75 works well; raise to 0.85 if you see false positives.
-MATCH_THRESHOLD = 0.85
+DEFAULTS = {
+    "navidrome_url": "http://localhost:4533/",
+    "navidrome_user": "admin",
+    "navidrome_password": "",
+    "navidrome_client": "reaper",
+    "navidrome_version": "1.16.1",
+    "match_threshold": 0.85,
+}
 # ─────────────────────────────────────────────────────────────────────────────
+
+
+def load_config() -> dict:
+    """Load config from config.yml, falling back to defaults."""
+    config = dict(DEFAULTS)
+    config_path = Path(CONFIG_FILE)
+
+    if not config_path.exists():
+        print(f"[WARN] {CONFIG_FILE} not found — using defaults. Run: cp config.example.yaml config.yml")
+        return config
+
+    if yaml is None:
+        print("[WARN] pyyaml not installed — pip install pyyaml. Using defaults.")
+        return config
+
+    with open(config_path) as f:
+        loaded = yaml.safe_load(f) or {}
+
+    config.update({k: v for k, v in loaded.items() if v is not None})
+    return config
+
+
+def slugify(name: str) -> str:
+    """Convert a playlist name or filename to a filesystem-safe slug."""
+    name = re.sub(r'[^\w\s-]', '', name.lower())
+    name = re.sub(r'[\s_-]+', '_', name)
+    return name.strip('_')
+
+
+def playlist_slug_from_csv(csv_path: Path) -> str:
+    """Derive a slug from a CSV filename."""
+    stem = csv_path.stem
+    return slugify(stem)
 
 
 def subsonic_token(password: str, salt: str) -> str:
     return hashlib.md5((password + salt).encode()).hexdigest()
 
 
-def api_get(endpoint: str, params: dict) -> dict:
-    base_url = NAVIDROME_URL.rstrip("/")
-    salt = "rock2000"
-    token = subsonic_token(ND_PASSWORD, salt)
-    base = {
-        "u": ND_USER, "t": token, "s": salt,
-        "v": ND_VERSION, "c": ND_CLIENT, "f": "json",
+def make_api_get(config: dict):
+    """Return an api_get function bound to the given config."""
+    base_url = config["navidrome_url"].rstrip("/")
+    salt = "reaper"
+    token = subsonic_token(config["navidrome_password"], salt)
+    auth_base = {
+        "u": config["navidrome_user"],
+        "t": token,
+        "s": salt,
+        "v": config["navidrome_version"],
+        "c": config["navidrome_client"],
+        "f": "json",
     }
-    base.update(params)
-    url = f"{base_url}/rest/{endpoint}?" + parse.urlencode(base)
-    try:
-        with request.urlopen(url, timeout=10) as resp:
-            raw = resp.read().decode("utf-8", errors="replace")
-            try:
-                payload = json.loads(raw)
-            except json.JSONDecodeError:
-                snippet = raw[:200].replace("\n", " ").replace("\r", " ")
-                print(
-                    f"\n  [ERROR] Navidrome returned non-JSON for {endpoint} "
-                    f"(HTTP {getattr(resp, 'status', '?')}, "
-                    f"content-type={resp.headers.get('Content-Type', '?')})"
-                )
-                print(f"  [ERROR] Body starts with: {snippet!r}")
-                return {}
 
-            response = payload.get("subsonic-response", {})
-            if response.get("status") not in (None, "ok"):
-                print(f"\n  [ERROR] API returned status={response.get('status')} for {endpoint}")
-                return {}
-            return payload
-    except URLError as e:
-        print(f"\n  [ERROR] API call failed: {e}")
-        return {}
+    def api_get(endpoint: str, params: dict) -> dict:
+        merged = {**auth_base, **params}
+        url = f"{base_url}/rest/{endpoint}?" + parse.urlencode(merged)
+        try:
+            with request.urlopen(url, timeout=10) as resp:
+                raw = resp.read().decode("utf-8", errors="replace")
+                try:
+                    payload = json.loads(raw)
+                except json.JSONDecodeError:
+                    snippet = raw[:200].replace("\n", " ").replace("\r", " ")
+                    print(f"\n  [ERROR] Navidrome returned non-JSON for {endpoint}")
+                    print(f"  [ERROR] Body starts with: {snippet!r}")
+                    return {}
+                response = payload.get("subsonic-response", {})
+                if response.get("status") not in (None, "ok"):
+                    print(f"\n  [ERROR] API status={response.get('status')} for {endpoint}")
+                    return {}
+                return payload
+        except URLError as e:
+            print(f"\n  [ERROR] API call failed: {e}")
+            return {}
+
+    return api_get
 
 
 def fuzzy(a: str, b: str) -> float:
@@ -86,20 +127,16 @@ def fuzzy(a: str, b: str) -> float:
 
 def normalise(s: str) -> str:
     """Strip noise and normalise text before fuzzy matching."""
-    # Remove bracketed noise
     s = re.sub(
         r'\(.*?(remaster|remastered|deluxe|edition|version|mix|mono|stereo|live|feat|bonus).*?\)',
         '', s, flags=re.IGNORECASE
     )
     s = re.sub(r'-\s*(remaster|remastered)\s*\d{4}', '', s, flags=re.IGNORECASE)
-    # Remove featured artist from title
     s = re.sub(r'\s*(feat\.?|ft\.?|featuring)\s+.*', '', s, flags=re.IGNORECASE)
-    # Normalise punctuation and separators
-    s = re.sub(r'[/&+]', ' and ', s)        # AC/DC → AC and DC
-    s = re.sub(r"'", '', s)                  # don't → dont
-    s = re.sub(r'[^\w\s]', ' ', s)          # strip remaining punctuation
-    s = re.sub(r'\s+', ' ', s)              # collapse spaces
-    # Unicode normalisation: Motörhead → Motorhead
+    s = re.sub(r'[/&+]', ' and ', s)
+    s = re.sub(r"'", '', s)
+    s = re.sub(r'[^\w\s]', ' ', s)
+    s = re.sub(r'\s+', ' ', s)
     s = ''.join(
         c for c in unicodedata.normalize('NFD', s)
         if unicodedata.category(c) != 'Mn'
@@ -108,18 +145,15 @@ def normalise(s: str) -> str:
 
 
 def strip_feat(title: str) -> str:
-    """Remove featured artist suffix from a title."""
     return re.sub(
         r'\s*(feat\.?|ft\.?|featuring)\s+.*', '', title, flags=re.IGNORECASE
     ).strip()
 
 
-def search_navidrome(artists: list[str], title: str) -> dict | None:
+def search_navidrome(api_get, artists: list[str], title: str, threshold: float) -> dict | None:
     """
     Search Navidrome for a song.
-    Accepts a list of artists (all from the Spotify CSV).
-    Returns best-matching song dict or None.
-    Two-pass strategy: title search first, then artist search as fallback.
+    Two-pass: title search first, then artist search as fallback.
     Score weighted 55% title / 45% artist.
     """
     best_score, best_match = 0.0, None
@@ -132,7 +166,7 @@ def search_navidrome(artists: list[str], title: str) -> dict | None:
         )
         return t * 0.55 + a * 0.45
 
-    # Pass 1: search by title (try with and without feat. suffix)
+    # Pass 1: title search (with and without feat. suffix)
     title_queries = list(dict.fromkeys([normalise(title), normalise(strip_feat(title))]))
     for query in title_queries:
         resp = api_get("search3.view", {
@@ -144,10 +178,10 @@ def search_navidrome(artists: list[str], title: str) -> dict | None:
             if s > best_score:
                 best_score, best_match = s, song
 
-    if best_score >= MATCH_THRESHOLD:
+    if best_score >= threshold:
         return best_match
 
-    # Pass 2: search by each artist name
+    # Pass 2: artist search fallback
     for artist in artists:
         resp = api_get("search3.view", {
             "query": normalise(artist), "songCount": 20,
@@ -158,57 +192,116 @@ def search_navidrome(artists: list[str], title: str) -> dict | None:
             if s > best_score:
                 best_score, best_match = s, song
 
-    return best_match if best_score >= MATCH_THRESHOLD else None
+    return best_match if best_score >= threshold else None
 
 
-def load_existing() -> tuple[set[str], set[str]]:
-    """Load existing found/missing URIs for comparison in dry-run mode."""
+def load_existing(found_file: Path, missing_file: Path) -> tuple[set[str], set[str]]:
     found_uris = set()
-    missing_uris = set()
+    missing_titles = set()
 
-    if Path(FOUND_FILE).exists():
-        with open(FOUND_FILE) as f:
+    if found_file.exists():
+        with open(found_file) as f:
             for t in json.load(f):
                 found_uris.add(t.get("uri", t.get("title", "")))
 
-    if Path(MISSING_FILE).exists():
-        with open(MISSING_FILE, newline='', encoding='utf-8') as f:
+    if missing_file.exists():
+        with open(missing_file, newline='', encoding='utf-8') as f:
             for row in csv.DictReader(f):
-                missing_uris.add(row.get("title", ""))
+                missing_titles.add(row.get("title", ""))
 
-    return found_uris, missing_uris
+    return found_uris, missing_titles
+
+
+def read_csv(csv_path: Path, rank_col: str | None) -> list[dict]:
+    """Read Exportify CSV and return list of track dicts."""
+    tracks = []
+    with open(csv_path, newline='', encoding='utf-8-sig') as f:
+        reader = csv.DictReader(f)
+        rows = list(reader)
+
+    for i, row in enumerate(rows):
+        all_artists = [a.strip() for a in row["Artist Name(s)"].split(",")]
+
+        if rank_col:
+            try:
+                rank = int(row[rank_col])
+            except (KeyError, ValueError):
+                print(f"[WARN] Could not read rank from column '{rank_col}' on row {i+1}, using row order.")
+                rank = i + 1
+        else:
+            rank = None  # No ranking — order preserved from CSV
+
+        tracks.append({
+            "rank":    rank,
+            "title":   row["Track Name"],
+            "artists": all_artists,
+            "artist":  all_artists[0],
+            "album":   row.get("Album Name", ""),
+            "uri":     row.get("Track URI", ""),
+        })
+
+    # Only sort if ranking is specified
+    if rank_col:
+        tracks.sort(key=lambda x: x["rank"])
+
+    return tracks
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Rock 2000 Phase 1 — Scan Navidrome")
+    parser = argparse.ArgumentParser(description="Reaper Phase 1 — Scan Navidrome")
+    parser.add_argument("--csv", required=True, help="Path to Exportify CSV file")
+    parser.add_argument("--name", default=None,
+                        help="Playlist name (default: derived from CSV filename)")
+    parser.add_argument("--rank-col", default=None,
+                        help="CSV column to use for track ranking (optional)")
     parser.add_argument("--dry-run", action="store_true",
                         help="Preview changes without writing any files")
     args = parser.parse_args()
 
+    csv_path = Path(args.csv)
+    if not csv_path.exists():
+        print(f"❌  CSV file not found: {csv_path}")
+        sys.exit(1)
+
+    # Derive playlist name and slug
+    playlist_name = args.name or csv_path.stem.replace("_", " ").replace("-", " ").strip()
+    slug = slugify(playlist_name)
+
+    # Set up per-playlist output directory
+    playlist_dir = Path("playlists") / slug
+    playlist_dir.mkdir(parents=True, exist_ok=True)
+
+    found_file   = playlist_dir / "found_tracks.json"
+    missing_file = playlist_dir / "missing_tracks.csv"
+    config_dir   = playlist_dir / "config"
+    config_dir.mkdir(exist_ok=True)
+    missing_file = config_dir / "missing_tracks.csv"
+
+    # Load config
+    config = load_config()
+    threshold = config["match_threshold"]
+    api_get = make_api_get(config)
+
     if args.dry_run:
         print("🔍 DRY RUN — no files will be written\n")
 
-    Path("config").mkdir(exist_ok=True)
+    print(f"Playlist : {playlist_name}")
+    print(f"Slug     : {slug}")
+    print(f"Output   : playlists/{slug}/")
+    print(f"CSV      : {csv_path}")
+    if args.rank_col:
+        print(f"Ranking  : by column '{args.rank_col}'")
+    else:
+        print(f"Ranking  : none (CSV order preserved)")
+    print()
 
-    print(f"Reading {CSV_FILE}...")
-    tracks = []
-    with open(CSV_FILE, newline='', encoding='utf-8-sig') as f:
-        for i, row in enumerate(csv.DictReader(f)):
-            all_artists = [a.strip() for a in row["Artist Name(s)"].split(",")]
-            tracks.append({
-                "rank":    2000 - i,
-                "title":   row["Track Name"],
-                "artists": all_artists,
-                "artist":  all_artists[0],
-                "album":   row["Album Name"],
-                "uri":     row["Track URI"],
-            })
-
-    tracks.sort(key=lambda x: x["rank"])
+    # Read tracks
+    print(f"Reading {csv_path}...")
+    tracks = read_csv(csv_path, args.rank_col)
     print(f"Loaded {len(tracks)} tracks. Scanning Navidrome...\n")
 
     # Load existing state for dry-run comparison
-    existing_found_uris, existing_missing_titles = load_existing()
+    existing_found_uris, existing_missing_titles = load_existing(found_file, missing_file)
 
     found, missing = [], []
 
@@ -219,17 +312,19 @@ def main():
         )
         sys.stdout.flush()
 
-        match = search_navidrome(track["artists"], track["title"])
+        match = search_navidrome(api_get, track["artists"], track["title"], threshold)
         if match:
-            found.append({
-                "rank":      track["rank"],
+            entry = {
                 "title":     track["title"],
                 "artist":    track["artist"],
                 "uri":       track["uri"],
                 "nd_id":     match["id"],
                 "nd_title":  match.get("title", ""),
                 "nd_artist": match.get("artist", ""),
-            })
+            }
+            if track["rank"] is not None:
+                entry["rank"] = track["rank"]
+            found.append(entry)
         else:
             missing.append(track)
 
@@ -241,8 +336,7 @@ def main():
     print(f"{'─'*62}\n")
 
     if args.dry_run:
-        # Show what changed vs current state
-        newly_found = [t for t in found if t["title"] in existing_missing_titles]
+        newly_found  = [t for t in found if t["title"] in existing_missing_titles]
         newly_missing = [t for t in missing if t["uri"] in existing_found_uris]
 
         print(f"{'─'*62}")
@@ -269,23 +363,22 @@ def main():
         print("\n[DRY RUN] No files written.")
         return
 
-    # Normal run — write output files
-    with open(FOUND_FILE, "w") as f:
+    # Write output files
+    with open(found_file, "w") as f:
         json.dump(found, f, indent=2)
-    print(f"✓ {FOUND_FILE}  ({len(found)} tracks)")
+    print(f"✓ {found_file}  ({len(found)} tracks)")
 
-    with open(MISSING_FILE, "w", newline='', encoding='utf-8') as f:
-        writer = csv.DictWriter(f, fieldnames=["rank", "artist", "title", "album"])
+    with open(missing_file, "w", newline='', encoding='utf-8') as f:
+        writer = csv.DictWriter(f, fieldnames=["artist", "title", "album"] +
+                                (["rank"] if args.rank_col else []))
         writer.writeheader()
         for t in missing:
-            writer.writerow({
-                "rank":   t["rank"],
-                "artist": t["artist"],
-                "title":  t["title"],
-                "album":  t["album"],
-            })
-    print(f"✓ {MISSING_FILE}  ({len(missing)} tracks to download)")
-    print("\nNext: ./02_download_missing.sh")
+            row = {"artist": t["artist"], "title": t["title"], "album": t["album"]}
+            if args.rank_col:
+                row["rank"] = t["rank"]
+            writer.writerow(row)
+    print(f"✓ {missing_file}  ({len(missing)} tracks to download)")
+    print(f"\nNext: ./02_download.sh --playlist {slug}")
 
 
 if __name__ == "__main__":
