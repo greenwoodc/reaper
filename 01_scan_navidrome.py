@@ -131,7 +131,10 @@ def normalise(s: str) -> str:
         r'\(.*?(remaster|remastered|deluxe|edition|version|mix|mono|stereo|live|feat|bonus).*?\)',
         '', s, flags=re.IGNORECASE
     )
-    s = re.sub(r'-\s*(remaster|remastered)\s*\d{4}', '', s, flags=re.IGNORECASE)
+    s = re.sub(r'\s+-\s+\d{4}\s*(remaster|remastered)\b.*', '', s, flags=re.IGNORECASE)
+    s = re.sub(r'\s+-\s+(remaster|remastered)\b.*', '', s, flags=re.IGNORECASE)
+    s = re.sub(r'\s+-\s+live\b.*', '', s, flags=re.IGNORECASE)
+    s = re.sub(r'\s+-\s+acoustic\b.*', '', s, flags=re.IGNORECASE)
     s = re.sub(r'\s*(feat\.?|ft\.?|featuring)\s+.*', '', s, flags=re.IGNORECASE)
     s = re.sub(r'[/&+]', ' and ', s)
     s = re.sub(r"'", '', s)
@@ -273,9 +276,6 @@ def main():
 
     found_file   = playlist_dir / "found_tracks.json"
     missing_file = playlist_dir / "missing_tracks.csv"
-    config_dir   = playlist_dir / "config"
-    config_dir.mkdir(exist_ok=True)
-    missing_file = config_dir / "missing_tracks.csv"
 
     # Load config
     config = load_config()
