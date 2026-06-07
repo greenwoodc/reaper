@@ -2,7 +2,7 @@
 # Reaper — Phase 2: Download missing tracks via slsk-batchdl (Docker)
 #
 # Usage:
-#   ./02_download_soulseek.sh --playlist "Hauraki Top 25"
+#   ./02_download_missing.sh --playlist "Hauraki Top 25"
 #
 
 set -euo pipefail
@@ -76,6 +76,11 @@ if [ "$TRACK_COUNT" -eq 0 ]; then
     exit 0
 fi
 
+# COPY FILE INTO THE CONTAINER'S ACCESSIBLE SCOPE
+# Stage it inside the config folder so the volume map picks it up perfectly
+CONTAINER_CSV_STAGING="$SCRIPT_DIR/config/active_search.csv"
+cp "$CSV_PATH" "$CONTAINER_CSV_STAGING"
+
 echo ""
 echo "► Starting download session for playlist: $PLAYLIST"
 echo "  Target Slug   : $SLUG"
@@ -99,13 +104,12 @@ echo "► Running sldl (output will stream below)..."
 echo "  Press Ctrl+C to pause — re-running this script will resume safely."
 echo "──────────────────────────────────────────────────────────────"
 
-# We must map our dynamic playlist folder path into the container context
-# Passing the relative path to docker compose run context
 cd "$SCRIPT_DIR"
 
+# Note: We are pointing directly to the internal /config/active_search.csv now
 docker compose run --rm --no-deps sldl \
     -c /config/sldl.conf \
-    "/config/../playlists/$SLUG/missing_tracks.csv" \
+    "/config/active_search.csv" \
     --artist-col "artist" \
     --title-col  "title" \
     --album-col  "album" \
@@ -115,6 +119,11 @@ echo ""
 echo "──────────────────────────────────────────────────────────────"
 echo "✓ Download session complete."
 echo "  Playlist Folder Log: playlists/$SLUG/download_log.txt"
+
+# Clean up our temporary container-facing CSV staging file
+if [ -f "$CONTAINER_CSV_STAGING" ]; then
+    rm "$CONTAINER_CSV_STAGING"
+fi
 
 # If slsk-batchdl drops an un-downloadable list file, catch it and put it in the playlist directory
 if [ -f "$SCRIPT_DIR/config/not_found.txt" ] && [ -s "$SCRIPT_DIR/config/not_found.txt" ]; then
