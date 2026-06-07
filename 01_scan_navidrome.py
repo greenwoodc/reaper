@@ -141,85 +141,66 @@ def normalise(s: str) -> str:
 
 def search_navidrome(api_get, artists: list[str], title: str, threshold: float) -> dict | None:
     """
-    Search Navidrome with resilient handling for multi-artists and messy track names.
+    Search Navidrome using targeted, high-precision query combinations to prevent
+    Subsonic index truncation on short or common keywords.
     """
     best_score, best_match = 0.0, None
 
+    # Handle multi-artists cleanly
     cleaned_artists = []
     for artist in artists:
         cleaned_artists.extend([a.strip() for a in artist.split(';') if a.strip()])
+
+    # Clean the primary artist name of punctuation that chokes Navidrome (e.g. "R.E.M." -> "REM")
+    primary_artist_clean = re.sub(r'[^\w\s]', '', cleaned_artists[0])
 
     def score_song(song: dict) -> float:
         t = fuzzy(normalise(title), normalise(song.get("title", "")))
         a = max(fuzzy(normalise(artist), normalise(song.get("artist", ""))) for artist in cleaned_artists)
         return t * 0.60 + a * 0.40
 
+    # Build highly-targeted API query payloads from highest to lowest precision
     clean_t = normalise(title)
-    queries = [title, clean_t]
-    if " " in clean_t:
-        queries.append(clean_t.split(" ")[0] + " " + cleaned_artists[0])
+    
+    queries = [
+        f"{primary_artist_clean} {clean_t}",  # 1. "REM orange crush" or "Tenacious D tribute"
+        title,                                 # 2. Exact CSV title
+        clean_t,                               # 3. Stripped clean title
+    ]
 
+    # Execute targeted searches
     for query in list(dict.fromkeys(queries)):
-        if not query: 
+        if not query or len(query.strip()) < 2: 
             continue
-        resp = api_get("search3.view", {"query": query, "songCount": 100})
+            
+        resp = api_get("search3.view", {
+            "query": query.strip(), 
+            "songCount": 120,
+            "artistCount": 0,
+            "albumCount": 0
+        })
+        
         for song in resp.get("subsonic-response", {}).get("searchResult3", {}).get("song", []):
             s = score_song(song)
             if s > best_score:
                 best_score, best_match = s, song
 
+    if best_score >= threshold:
+        return best_match
+
+    # Deep Fallback Pass: Search only the clean primary artist name if title searches blanked out
+    resp = api_get("search3.view", {
+        "query": primary_artist_clean, 
+        "songCount": 150,
+        "artistCount": 0,
+        "albumCount": 0
+    })
+    for song in resp.get("subsonic-response", {}).get("searchResult3", {}).get("song", []):
+        s = score_song(song)
+        if s > best_score:
+            best_score, best_match = s, song
+
     return best_match if best_score >= threshold else None
-
-
-def load_existing(found_file: Path, missing_file: Path) -> tuple[set[str], set[str]]:
-    found_uris = set()
-    missing_titles = set()
-
-    if found_file.exists():
-        with open(found_file) as f:
-            for t in json.load(f):
-                found_uris.add(t.get("uri", t.get("title", "")))
-
-    if missing_file.exists():
-        with open(missing_file, newline='', encoding='utf-8') as f:
-            for row in csv.DictReader(f):
-                missing_titles.add(row.get("title", ""))
-
-    return found_uris, missing_titles
-
-
-def read_csv(csv_path: Path, rank_col: str | None) -> list[dict]:
-    """Read Exportify CSV and return list of track dicts."""
-    tracks = []
-    with open(csv_path, newline='', encoding='utf-8-sig') as f:
-        reader = csv.DictReader(f)
-        rows = list(reader)
-
-    for i, row in enumerate(rows):
-        all_artists = [a.strip() for a in row["Artist Name(s)"].split(",")]
-
-        if rank_col:
-            try:
-                rank = int(row[rank_col])
-            except (KeyError, ValueError):
-                print(f"[WARN] Could not read rank from column '{rank_col}' on row {i+1}, using row order.")
-                rank = i + 1
-        else:
-            rank = None
-
-        tracks.append({
-            "rank":    rank,
-            "title":   row["Track Name"],
-            "artists": all_artists,
-            "artist":  all_artists[0],
-            "album":   row.get("Album Name", ""),
-            "uri":     row.get("Track URI", ""),
-        })
-
-    if rank_col:
-        tracks.sort(key=lambda x: x["rank"])
-
-    return tracks
 
 
 def main():
