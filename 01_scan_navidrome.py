@@ -130,14 +130,18 @@ def normalise(s: str) -> str:
         '', s
     )
     
-    # 2. Aggressively drop trailing hyphens containing years/remasters (handles "Remastered 2012" and "2012 Remaster")
-    s = re.sub(r'\s*-\s*.*?(remaster|remastered|live|acoustic|version|edit|\d{4}).*', '', s)
-    
-    # 3. Handle common multi-artist text or replacement clutter
+    # 2. Fix the greedy hyphen bug: Split from right side to avoid breaking titles like "Thirty-Three"
+    if " - " in s:
+        parts = s.split(" - ")
+        # If the last segment looks like metadata bloat, discard it
+        if any(word in parts[-1] for word in ["remaster", "live", "acoustic", "version", "edit", "201", "202", "199"]):
+            s = " - ".join(parts[:-1])
+
+    # 3. Handle remaining common multi-artist text or replacement clutter
     s = re.sub(r'\s*(feat\.?|ft\.?|featuring)\s+.*', '', s)
     s = re.sub(r'[/&+;]', ' and ', s)
     s = re.sub(r"'", '', s)
-    s = re.sub(r'[^\w\s]', ' ', s)
+    s = re.sub(r'[^\w\s-]', ' ', s) # Keep inner hyphens intact
     s = re.sub(r'\s+', ' ', s)
     
     # 4. Strip unicode accents
@@ -165,10 +169,17 @@ def search_navidrome(api_get, artists: list[str], title: str, threshold: float) 
             fuzzy(normalise(artist), normalise(song.get("artist", "")))
             for artist in cleaned_artists
         )
-        return t * 0.55 + a * 0.45
+        # Fallback layout check to make sure close scores match smoothly
+        return t * 0.60 + a * 0.40
 
     # Base raw search phrases (Broad strings for Subsonic's index search)
-    clean_title = strip_feat(title).split(" - ")[0].strip()
+    # Ensure splitting title doesn't accidentally destroy "Thirty-Three"
+    clean_title = title.split(" - ")
+    if len(clean_title) > 1 and any(w in clean_title[-1].lower() for w in ["remaster", "201"]):
+        clean_title = clean_title[0].strip()
+    else:
+        clean_title = title.strip()
+
     title_queries = list(dict.fromkeys([clean_title, title]))
     
     # Pass 1: Title Search
@@ -177,7 +188,7 @@ def search_navidrome(api_get, artists: list[str], title: str, threshold: float) 
             continue
         resp = api_get("search3.view", {
             "query": query, 
-            "songCount": 40,
+            "songCount": 60, # Increased lookahead cap
             "artistCount": 0, 
             "albumCount": 0,
         })
@@ -193,7 +204,7 @@ def search_navidrome(api_get, artists: list[str], title: str, threshold: float) 
     for artist in cleaned_artists:
         resp = api_get("search3.view", {
             "query": artist, 
-            "songCount": 40,
+            "songCount": 60,
             "artistCount": 0, 
             "albumCount": 0,
         })
@@ -297,6 +308,20 @@ def main():
     else:
         print(f"Ranking  : none (CSV order preserved)")
     print()
+
+    # ── TROUBLESHOOTING / DIAGNOSTIC PRINT ───────────────────────────────────
+    print("🛠️  [DEBUG] Normalisation String Cleanup Transformations:")
+    test_items = [
+        "Thirty-Three - Remastered 2012",
+        "Orange Crush - Remastered 2013",
+        "Fiji Baby",
+        "Wish You Were Here",
+        "Diamonds On The Inside"
+    ]
+    for item in test_items:
+        print(f"    Original: {item:<35} → Normalised: {normalise(item)}")
+    print("──────────────────────────────────────────────────────────────\n")
+    # ─────────────────────────────────────────────────────────────────────────
 
     print(f"Reading {csv_path}...")
     tracks = read_csv(csv_path, args.rank_col)
