@@ -112,7 +112,6 @@ docker compose run --rm --no-deps sldl \
     "/config/active_search.csv" \
     --artist-col "artist" \
     --title-col  "title" \
-    --album-col  "album" \
     --max-retries 2 \
     2>&1 | tee "$PLAYLIST_DIR/download_log.txt"
 
