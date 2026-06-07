@@ -91,17 +91,12 @@ def make_api_get(config: dict):
                 try:
                     payload = json.loads(raw)
                 except json.JSONDecodeError:
-                    snippet = raw[:200].replace("\n", " ").replace("\r", " ")
-                    print(f"\n  [ERROR] Navidrome returned non-JSON for {endpoint}")
-                    print(f"  [ERROR] Body starts with: {snippet!r}")
                     return {}
                 response = payload.get("subsonic-response", {})
                 if response.get("status") not in (None, "ok"):
-                    print(f"\n  [ERROR] API status={response.get('status')} for {endpoint}")
                     return {}
                 return payload
-        except URLError as e:
-            print(f"\n  [ERROR] API call failed: {e}")
+        except URLError:
             return {}
 
     return api_get
@@ -140,39 +135,39 @@ def normalise(s: str) -> str:
 
 
 def search_navidrome(api_get, artists: list[str], title: str, threshold: float) -> dict | None:
-    """
-    Search Navidrome using targeted, high-precision query combinations to prevent
-    Subsonic index truncation on short or common keywords.
-    """
     best_score, best_match = 0.0, None
 
-    # Handle multi-artists cleanly
     cleaned_artists = []
     for artist in artists:
         cleaned_artists.extend([a.strip() for a in artist.split(';') if a.strip()])
 
-    # Clean the primary artist name of punctuation that chokes Navidrome (e.g. "R.E.M." -> "REM")
     primary_artist_clean = re.sub(r'[^\w\s]', '', cleaned_artists[0])
-
-    def score_song(song: dict) -> float:
-        t = fuzzy(normalise(title), normalise(song.get("title", "")))
-        a = max(fuzzy(normalise(artist), normalise(song.get("artist", ""))) for artist in cleaned_artists)
-        return t * 0.60 + a * 0.40
-
-    # Build highly-targeted API query payloads from highest to lowest precision
     clean_t = normalise(title)
     
+    # Identify if this is one of our target troubleshooting tracks
+    is_stubborn = clean_t in ["orange crush", "stand", "tribute", "home again", "all along the watchtower"]
+
+    def score_song(song: dict) -> float:
+        t_score = fuzzy(clean_t, normalise(song.get("title", "")))
+        a_score = max(fuzzy(normalise(artist), normalise(song.get("artist", ""))) for artist in cleaned_artists)
+        return t_score * 0.60 + a_score * 0.40
+
     queries = [
-        f"{primary_artist_clean} {clean_t}",  # 1. Targeted: "REM orange crush"
-        title,                                 # 2. Exact CSV title
-        clean_t,                               # 3. Stripped clean title
+        f"{primary_artist_clean} {clean_t}",
+        title,
+        clean_t,
     ]
 
-    # Execute targeted searches
+    if is_stubborn:
+        print(f"\n\n🔍 [LIVE DEBUG] Troubleshooting match for: {cleaned_artists[0]} — {title}")
+
     for query in list(dict.fromkeys(queries)):
         if not query or len(query.strip()) < 2: 
             continue
             
+        if is_stubborn:
+            print(f"  👉 Querying API: '{query.strip()}'")
+
         resp = api_get("search3.view", {
             "query": query.strip(), 
             "songCount": 120,
@@ -180,15 +175,26 @@ def search_navidrome(api_get, artists: list[str], title: str, threshold: float) 
             "albumCount": 0
         })
         
-        for song in resp.get("subsonic-response", {}).get("searchResult3", {}).get("song", []):
+        songs = resp.get("subsonic-response", {}).get("searchResult3", {}).get("song", [])
+        if is_stubborn and not songs:
+            print("     ❌ Navidrome API returned 0 results for this query branch.")
+
+        for song in songs:
             s = score_song(song)
+            if is_stubborn:
+                print(f"     ↳ Match Found: '{song.get('artist')} — {song.get('title')}' [Score: {s:.2f}]")
             if s > best_score:
                 best_score, best_match = s, song
 
     if best_score >= threshold:
+        if is_stubborn:
+            print(f"  ✅ SUCCESS: Matched with score {best_score:.2f}\n")
         return best_match
 
-    # Deep Fallback Pass: Search only the clean primary artist name if title searches blanked out
+    # Deep Fallback Pass
+    if is_stubborn:
+        print(f"  ⚠️  Low scores. Attempting absolute fallback search for artist index: '{primary_artist_clean}'")
+
     resp = api_get("search3.view", {
         "query": primary_artist_clean, 
         "songCount": 150,
@@ -199,6 +205,12 @@ def search_navidrome(api_get, artists: list[str], title: str, threshold: float) 
         s = score_song(song)
         if s > best_score:
             best_score, best_match = s, song
+
+    if is_stubborn:
+        if best_score >= threshold:
+            print(f"  ✅ SUCCESS IN FALLBACK: Matched {best_match.get('title')} ({best_score:.2f})\n")
+        else:
+            print(f"  ❌ FAILURE: Best found was '{best_match.get('artist') if best_match else 'None'} — {best_match.get('title') if best_match else 'None'}' with score {best_score:.2f} (Needs {threshold})\n")
 
     return best_match if best_score >= threshold else None
 
@@ -298,15 +310,14 @@ def main():
 
     print("🛠️  [DEBUG] Normalisation String Cleanup Transformations:")
     test_items = [
-        "Jimi Hendrix,All Along the Watchtower,Electric Ladyland",
-        "Shihad,Home Again,The Meanest Hits",
+        "All Along the Watchtower",
+        "The Man Who Sold The World - Live",
         "Just Like Heaven - Remastered 2006",
         "Reckless (Don't Be So...) - Remastered",
-        "R.E.M.,Stand - Remastered 2013,Green (Remastered)",
-        "R.E.M.,Orange Crush - Remastered 2013,Green (Remastered)",
+        "Say It Ain't So - Original Mix",
+        "Orange Crush - Remastered 2013",
         "Run Like Hell - Live",
-        "R.E.M.,It's The End Of The World As We Know It (And I Feel Fine),Document (R.E.M. No. 5)"
-        "Pixies,Here Comes Your Man,Doolittle"
+        "It's The End Of The World As We Know It (And I Feel Fine)"
     ]
     for item in test_items:
         print(f"    Original: {item:<60} → Normalised: {normalise(item)}")
@@ -321,11 +332,14 @@ def main():
     found, missing = [], []
 
     for i, track in enumerate(tracks, 1):
-        sys.stdout.write(
-            f"\r  [{i:4d}/{len(tracks)}] "
-            f"{track['artist'][:30]:<30} — {track['title'][:35]:<35}"
-        )
-        sys.stdout.flush()
+        # Only output shorthand tracking if it's not a stubborn test track being printed separately
+        is_stubborn = normalise(track["title"]) in ["orange crush", "stand", "tribute", "home again", "all along the watchtower"]
+        if not is_stubborn:
+            sys.stdout.write(
+                f"\r  [{i:4d}/{len(tracks)}] "
+                f"{track['artist'][:30]:<30} — {track['title'][:35]:<35}"
+            )
+            sys.stdout.flush()
 
         match = search_navidrome(api_get, track["artists"], track["title"], threshold)
         if match:
