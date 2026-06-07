@@ -1,147 +1,174 @@
 #!/usr/bin/env python3
 """
 Clean up search phrases in missing_tracks.csv for better Soulseek hits.
-Removes remaster/deluxe/edition suffixes, simplifies featured artists,
-and normalizes special characters.
+Leverages the robust normalization logic built for Phase 1.
 """
 
+import argparse
 import csv
 import re
+import shutil
+import sys
 import unicodedata
 from pathlib import Path
 
 
+def slugify(name: str) -> str:
+    """Convert a playlist name to its filesystem slug directory."""
+    name = re.sub(r'[^\w\s-]', '', name.lower())
+    name = re.sub(r'[\s_-]+', '_', name)
+    return name.strip('_')
+
+
 def simplify_text(s: str) -> str:
-    """Remove diacritics and normalize unicode."""
+    """Remove diacritics and normalize unicode accents."""
+    if not s:
+        return ""
     nfd = unicodedata.normalize('NFD', s)
     return ''.join(c for c in nfd if unicodedata.category(c) != 'Mn')
 
 
 def clean_artist(artist: str) -> str:
-    """Extract primary artist, remove featured/collaboration cruft."""
-    # Split on semicolons, commas, " and ", " feat", " with"
-    # and take the first part
-    for sep in [';', ',', ' and ', ' &']:
-        if sep in artist:
-            artist = artist.split(sep)[0].strip()
+    """Extract primary artist, handle specific band eras, and drop collab noise."""
+    if not artist:
+        return ""
+    
+    # Handle multi-artist splits early
+    for sep in [';', ',', ' and ', ' &', ' feat.', ' feat']:
+        if sep in artist.lower():
+            # Split and keep the primary artist
+            artist = re.split(sep, artist, flags=re.IGNORECASE)[0].strip()
 
-    # Remove (feat. ...) style info
+    # Drop trailing/inner feature parentheses left behind
     artist = re.sub(r'\s*\(feat\..*?\)', '', artist, flags=re.IGNORECASE)
-    artist = re.sub(r'\s*\bfeat\..*', '', artist, flags=re.IGNORECASE)
+    artist = re.sub(r'\s*\bfeaturing\b.*', '', artist, flags=re.IGNORECASE)
+    
+    # Shihad / Pacifier Multi-era Soulseek search enhancement
+    if artist.lower() in ["shihad", "pacifier", "shihad/pacifier"]:
+        # Giving both names separated by a space often yields the best hits on Soulseek
+        return "Shihad Pacifier"
 
     return artist.strip()
 
 
 def clean_title(title: str) -> str:
-    """Remove remaster/deluxe/edition/version noise and featured artists from title."""
-    # Remove things like "- 2009 Remaster", "- Remastered", etc.
+    """Apply the refined Phase 1 right-split logic to strip metadata bloat safely."""
+    if not title:
+        return ""
+
+    # 1. Strip structural parenthesis blocks matching metadata words
     title = re.sub(
-        r'\s*[-–]?\s*(20\d{2}\s+)?Remaster(ed)?(\s+\d{4})?',
+        r'\(.*?(remaster|remastered|deluxe|edition|version|mix|mono|stereo|live|feat|featuring|bonus|original|studio|20\d{2}|19\d{2}).*?\)',
         '', title, flags=re.IGNORECASE
     )
 
-    # Remove (edition) style tags
-    title = re.sub(
-        r'\s*\(.*?(deluxe|edition|version|remix|mix|remaster|mono|stereo|expanded|special|live).*?\)',
-        '', title, flags=re.IGNORECASE
-    )
+    # 2. Right-side split for hyphens matching keywords (Matches 01_scan_navidrome logic)
+    if " - " in title:
+        parts = title.split(" - ")
+        if any(word in parts[-1].lower() for word in ["remaster", "live", "acoustic", "version", "edit", "mix", "original", "20", "19"]):
+            title = " - ".join(parts[:-1])
 
-    # Remove (feat. ...) and (featuring ...) tags - these break Soulseek searches
-    title = re.sub(
-        r'\s*\(.*?(feat\.|featuring).*?\)',
-        '', title, flags=re.IGNORECASE
-    )
-
-    # Remove studio/live prefixes and suffixes
-    title = re.sub(r'^\s*\(.*?(Live|Studio).*?\)\s*', '', title, flags=re.IGNORECASE)
-
-    # Clean up apostrophes (curly vs straight)
-    title = title.replace("'", "'")
-
-    # Remove empty parentheses left behind
+    # 3. Clean up empty brackets and trailing noise (But preserve internal hyphens/apostrophes)
     title = re.sub(r'\s*\(\s*\)', '', title)
-
-    # Remove excess whitespace
-    title = re.sub(r'\s+', ' ', title).strip()
-
-    return title
+    title = re.sub(r'\s*\[\s*\]', '', title)
+    title = re.sub(r'\s+', ' ', title)
+    
+    return title.strip()
 
 
 def main():
-    csv_path = Path("config/missing_tracks.csv")
-    output_path = Path("config/missing_tracks_cleaned.csv")
+    parser = argparse.ArgumentParser(description="Reaper Phase 1b — Clean Missing CSV for Soulseek")
+    parser.add_argument("--csv", help="Direct path to a missing_tracks.csv file")
+    parser.add_argument("--playlist", help="Name of playlist folder inside playlists/ to target automatically")
+    args = parser.parse_args()
+
+    # Determine input file path location
+    if args.csv:
+        csv_path = Path(args.csv)
+    elif args.playlist:
+        slug = slugify(args.playlist)
+        csv_path = Path("playlists") / slug / "missing_tracks.csv"
+    else:
+        # Fallback default lookup to match your previous setup
+        csv_path = Path("playlists/hauraki_top_25/missing_tracks.csv")
+        if not csv_path.exists():
+            csv_path = Path("config/missing_tracks.csv")
 
     if not csv_path.exists():
-        print(f"Error: {csv_path} not found")
-        return
+        print(f"❌ Error: Target CSV not found at '{csv_path}'")
+        print("Please specify path explicitly via: --csv path/to/file.csv or --playlist 'Playlist Name'")
+        sys.exit(1)
+
+    output_path = csv_path.with_name("missing_tracks_cleaned.tmp")
 
     print(f"Reading {csv_path}...")
     tracks = []
 
-    with open(csv_path, 'r', encoding='utf-8') as f:
+    with open(csv_path, 'r', encoding='utf-8-sig') as f:
         reader = csv.DictReader(f)
+        fieldnames = reader.fieldnames
         for row in reader:
             tracks.append(row)
 
-    print(f"Loaded {len(tracks)} tracks. Cleaning...")
+    print(f"Loaded {len(tracks)} tracks. Cleaning string layout for Soulseek compatibility...")
 
     cleaned = []
     for track in tracks:
-        artist = track['artist']
-        title = track['title']
+        orig_artist = track.get('artist', '')
+        orig_title = track.get('title', '')
 
-        # Clean
-        artist_clean = clean_artist(artist)
-        title_clean = clean_title(title)
+        # Process strings using the synchronized logic
+        artist_clean = clean_artist(orig_artist)
+        title_clean = clean_title(orig_title)
 
-        # Normalize diacritics for Soulseek
+        # Normalize diacritics / special characters
         artist_clean = simplify_text(artist_clean)
         title_clean = simplify_text(title_clean)
 
-        cleaned.append({
-            'rank': track['rank'],
-            'artist': artist_clean,
-            'title': title_clean,
-            'album': track['album'],
-            'artist_orig': artist,
-            'title_orig': title,
-        })
+        # Preserve the incoming metadata structure cleanly
+        cleaned_row = track.copy()
+        cleaned_row['artist'] = artist_clean
+        cleaned_row['title'] = title_clean
+        
+        # Store metadata references to render debugging transformations nicely
+        cleaned_row['_orig_artist'] = orig_artist
+        cleaned_row['_orig_title'] = orig_title
+        cleaned.append(cleaned_row)
 
-    # Write cleaned CSV
+    # Re-verify and compile required fields for writing out
+    output_fields = [f for f in fieldnames if f in sorted(cleaned[0].keys())] if fieldnames else ['rank', 'artist', 'title', 'album']
+    
     with open(output_path, 'w', newline='', encoding='utf-8') as f:
-        fieldnames = ['rank', 'artist', 'title', 'album']
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer = csv.DictWriter(f, fieldnames=output_fields, extrasaction='ignore')
         writer.writeheader()
         for track in cleaned:
-            writer.writerow({k: track[k] for k in fieldnames})
+            writer.writerow(track)
 
-    print(f"✓ {output_path}")
-
-    # AUTO-REPLACE the original CSV with cleaned version
-    import shutil
+    # Overwrite the original target file atomatically
     shutil.move(str(output_path), str(csv_path))
-    print(f"✓ Replaced original CSV with cleaned version\n")
+    print(f"✓ Replaced file with Soulseek-optimized version: {csv_path}\n")
 
-    # Show some examples of changes
-    print("Sample changes (first 10):")
+    # Display transformation comparisons
+    print("Sample Modifications Visualizer (Max 10):")
     print(f"{'─'*100}")
     count = 0
-    for track in cleaned[:20]:
-        if track['artist_orig'] != track['artist'] or track['title_orig'] != track['title']:
-            print(f"\nTrack {track['rank']}:")
-            if track['artist_orig'] != track['artist']:
-                print(f"  Artist: {track['artist_orig']!r}")
-                print(f"      →  {track['artist']!r}")
-            if track['title_orig'] != track['title']:
-                print(f"  Title:  {track['title_orig']!r}")
-                print(f"      →  {track['title']!r}")
+    for track in cleaned:
+        changed_artist = track['_orig_artist'] != track['artist']
+        changed_title = track['_orig_title'] != track['title']
+        
+        if changed_artist or changed_title:
+            rank_val = track.get('rank', 'N/A')
+            print(f"\nTrack [Rank {rank_val}]:")
+            if changed_artist:
+                print(f"  Artist: {track['_orig_artist']!r:<45} →  {track['artist']!r}")
+            if changed_title:
+                print(f"  Title:  {track['_orig_title']!r:<45} →  {track['title']!r}")
             count += 1
             if count >= 10:
                 break
 
     print(f"\n{'─'*100}")
-    print(f"✓ Cleaned {len(cleaned)} tracks and auto-replaced original")
-    print(f"  Ready for download!\n")
+    print(f"✓ Post-processing total: {len(cleaned)} tracks successfully structured for Soulseek extraction.")
 
 
 if __name__ == "__main__":
