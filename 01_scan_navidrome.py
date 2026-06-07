@@ -298,14 +298,15 @@ def main():
 
     print("🛠️  [DEBUG] Normalisation String Cleanup Transformations:")
     test_items = [
-        "All Along the Watchtower",
-        "The Man Who Sold The World - Live",
+        "Jimi Hendrix,All Along the Watchtower,Electric Ladyland",
+        "Shihad,Home Again,The Meanest Hits",
         "Just Like Heaven - Remastered 2006",
         "Reckless (Don't Be So...) - Remastered",
-        "Say It Ain't So - Original Mix",
-        "Orange Crush - Remastered 2013",
+        "R.E.M.,Stand - Remastered 2013,Green (Remastered)",
+        "R.E.M.,Orange Crush - Remastered 2013,Green (Remastered)",
         "Run Like Hell - Live",
-        "It's The End Of The World As We Know It (And I Feel Fine)"
+        "R.E.M.,It's The End Of The World As We Know It (And I Feel Fine),Document (R.E.M. No. 5)"
+        "Pixies,Here Comes Your Man,Doolittle"
     ]
     for item in test_items:
         print(f"    Original: {item:<60} → Normalised: {normalise(item)}")
