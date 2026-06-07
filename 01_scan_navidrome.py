@@ -163,7 +163,7 @@ def search_navidrome(api_get, artists: list[str], title: str, threshold: float) 
     clean_t = normalise(title)
     
     queries = [
-        f"{primary_artist_clean} {clean_t}",  # 1. "REM orange crush" or "Tenacious D tribute"
+        f"{primary_artist_clean} {clean_t}",  # 1. Targeted: "REM orange crush"
         title,                                 # 2. Exact CSV title
         clean_t,                               # 3. Stripped clean title
     ]
@@ -201,6 +201,57 @@ def search_navidrome(api_get, artists: list[str], title: str, threshold: float) 
             best_score, best_match = s, song
 
     return best_match if best_score >= threshold else None
+
+
+def load_existing(found_file: Path, missing_file: Path) -> tuple[set[str], set[str]]:
+    found_uris = set()
+    missing_titles = set()
+
+    if found_file.exists():
+        with open(found_file) as f:
+            for t in json.load(f):
+                found_uris.add(t.get("uri", t.get("title", "")))
+
+    if missing_file.exists():
+        with open(missing_file, newline='', encoding='utf-8') as f:
+            for row in csv.DictReader(f):
+                missing_titles.add(row.get("title", ""))
+
+    return found_uris, missing_titles
+
+
+def read_csv(csv_path: Path, rank_col: str | None) -> list[dict]:
+    """Read Exportify CSV and return list of track dicts."""
+    tracks = []
+    with open(csv_path, newline='', encoding='utf-8-sig') as f:
+        reader = csv.DictReader(f)
+        rows = list(reader)
+
+    for i, row in enumerate(rows):
+        all_artists = [a.strip() for a in row["Artist Name(s)"].split(",")]
+
+        if rank_col:
+            try:
+                rank = int(row[rank_col])
+            except (KeyError, ValueError):
+                print(f"[WARN] Could not read rank from column '{rank_col}' on row {i+1}, using row order.")
+                rank = i + 1
+        else:
+            rank = None
+
+        tracks.append({
+            "rank":    rank,
+            "title":   row["Track Name"],
+            "artists": all_artists,
+            "artist":  all_artists[0],
+            "album":   row.get("Album Name", ""),
+            "uri":     row.get("Track URI", ""),
+        })
+
+    if rank_col:
+        tracks.sort(key=lambda x: x["rank"])
+
+    return tracks
 
 
 def main():
@@ -245,7 +296,6 @@ def main():
         print(f"Ranking  : none (CSV order preserved)")
     print()
 
-    # ── UPDATED TROUBLESHOOTING INPUTS ───────────────────────────────────────
     print("🛠️  [DEBUG] Normalisation String Cleanup Transformations:")
     test_items = [
         "All Along the Watchtower",
@@ -260,7 +310,6 @@ def main():
     for item in test_items:
         print(f"    Original: {item:<60} → Normalised: {normalise(item)}")
     print("──────────────────────────────────────────────────────────────\n")
-    # ─────────────────────────────────────────────────────────────────────────
 
     print(f"Reading {csv_path}...")
     tracks = read_csv(csv_path, args.rank_col)
