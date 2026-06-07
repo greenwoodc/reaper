@@ -113,7 +113,7 @@ docker compose run --rm --no-deps sldl \
     --artist-col "artist" \
     --title-col  "title" \
     --max-retries 2 \
-    --debug \
+    --quiet \
     2>&1 | tee "$PLAYLIST_DIR/download_log.txt"
 
 echo ""
