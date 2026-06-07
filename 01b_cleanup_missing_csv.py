@@ -29,14 +29,27 @@ def simplify_text(s: str) -> str:
     return ''.join(c for c in nfd if unicodedata.category(c) != 'Mn')
 
 
+def clean_punctuation(s: str) -> str:
+    """
+    Strip legacy P2P search hazards (ellipses, trailing dots, rogue symbols)
+    while preserving basic spaces.
+    """
+    if not s:
+        return ""
+    # Replace ellipses, hyphens, brackets, and quotes with clean spaces
+    s = re.sub(r'\.\.\.+', ' ', s)
+    s = re.sub(r'[\[\]\(\)\"\'\’\‘\“”\.\,\!\?\*\:\-\—\–\/]', ' ', s)
+    # Collapse any introduced multi-spaces
+    return re.sub(r'\s+', ' ', s).strip()
+
+
 def clean_artist(artist: str) -> str:
     """Extract primary artist, handle specific band eras, and drop collab noise."""
     if not artist:
         return ""
     
     # Handle multi-artist splits early using strict boundaries or explicit delimiters
-    for sep in [';', ',', r'\band\b', r'\b&\b', r'\bfeat\.?\b', r'\bfeaturing\b']:
-        # Split on the separator if it matches as a standalone token/character
+    for sep in [';', ',', r'\band\b', r'\b&\b', r'\bfeat\.?\b', r'\bfeaturing\b', r'\bwith\b']:
         parts = re.split(sep, artist, flags=re.IGNORECASE)
         if len(parts) > 1:
             artist = parts[0].strip()
@@ -45,8 +58,8 @@ def clean_artist(artist: str) -> str:
     artist = re.sub(r'\s*\(feat\..*?\)', '', artist, flags=re.IGNORECASE)
     artist = re.sub(r'\s*\bfeaturing\b.*', '', artist, flags=re.IGNORECASE)
     
-    # Handle composite dual-identities safely using clean spacing
-    artist = artist.replace('/', ' ')
+    # Strip common backing band noise if it complicates the query string
+    artist = re.sub(r'\s+&\s+the\s+.*', '', artist, flags=re.IGNORECASE)
 
     return artist.strip()
 
@@ -57,23 +70,25 @@ def clean_title(title: str) -> str:
         return ""
 
     # 1. Strip structural metadata blocks safely.
-    # We use \b (word boundaries) around short words so 'and' matches '(And I Feel Fine)' 
-    # but completely ignores 'Stand' inside '(Stand by Me)'.
     title = re.sub(
         r'\(.*?(remaster|remastered|deluxe|edition|version|mix|mono|stereo|live|feat|featuring|bonus|original|studio|20\d{2}|19\d{2}|\bwith\b|\band\b|\bduet\b|\bvs\b|\bpresents\b|\bpres\b).*?\)',
         '', title, flags=re.IGNORECASE
     )
 
-    # 2. Right-side split for hyphens matching keywords (Matches 01_scan_navidrome logic)
+    # 2. Right-side split for hyphens matching keywords
     if " - " in title:
         parts = title.split(" - ")
         if any(word in parts[-1].lower() for word in ["remaster", "live", "acoustic", "version", "edit", "mix", "original", "20", "19"]):
             title = " - ".join(parts[:-1])
 
-    # 3. Clean up empty brackets and trailing noise (Preserving valid internal punctuation)
+    # 3. Aggressive Parenthetical Slicing
+    # If the track title ends with a parenthetical clause (e.g., "(Don't Be So...)"),
+    # we discard it entirely because casual uploaders rarely label files with it.
+    title = re.sub(r'\s*\(.*?\)\s*$', '', title)
+
+    # 4. Clean up empty brackets and trailing noise
     title = re.sub(r'\s*\(\s*\)', '', title)
     title = re.sub(r'\s*\[\s*\]', '', title)
-    title = re.sub(r'\s+', ' ', title)
     
     return title.strip()
 
@@ -116,11 +131,17 @@ def main():
         orig_artist = track.get('artist', '')
         orig_title = track.get('title', '')
 
+        # Pass 1: Core structural extraction
         artist_clean = clean_artist(orig_artist)
         title_clean = clean_title(orig_title)
 
+        # Pass 2: Unicode normalization
         artist_clean = simplify_text(artist_clean)
         title_clean = simplify_text(title_clean)
+
+        # Pass 3: Destructive P2P punctuation stripping
+        artist_clean = clean_punctuation(artist_clean)
+        title_clean = clean_punctuation(title_clean)
 
         cleaned_row = track.copy()
         cleaned_row['artist'] = artist_clean
