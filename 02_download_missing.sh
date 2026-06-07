@@ -106,16 +106,13 @@ echo "────────────────────────�
 
 cd "$SCRIPT_DIR"
 
-# INJECTED FLAGS: --remove-locked, --remove-full-queue, --timeout 8000, --max-retries 2
+# Verified argument: --max-retries limits endless loop behaviors on locked users
 docker compose run --rm --no-deps sldl \
     -c /config/sldl.conf \
     "/config/active_search.csv" \
     --artist-col "artist" \
     --title-col  "title" \
     --album-col  "album" \
-    --remove-locked \
-    --remove-full-queue \
-    --timeout 8000 \
     --max-retries 2 \
     2>&1 | tee "$PLAYLIST_DIR/download_log.txt"
 
