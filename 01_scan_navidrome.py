@@ -1,8 +1,3 @@
-Here is the streamlined version of `01_scan_navidrome.py`.
-
-All of the `is_stubborn` flags, target arrays, and live terminal output logs for troubleshooting tracks like *Orange Crush* and *Stand* have been completely removed. The user interface will now stay clean, keeping its quick status counter rolling smoothly across all tracks.
-
-```python
 #!/usr/bin/env python3
 """
 Reaper — Phase 1: Scan Navidrome
@@ -412,5 +407,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-```
