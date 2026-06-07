@@ -1,3 +1,8 @@
+Here is the streamlined version of `01_scan_navidrome.py`.
+
+All of the `is_stubborn` flags, target arrays, and live terminal output logs for troubleshooting tracks like *Orange Crush* and *Stand* have been completely removed. The user interface will now stay clean, keeping its quick status counter rolling smoothly across all tracks.
+
+```python
 #!/usr/bin/env python3
 """
 Reaper — Phase 1: Scan Navidrome
@@ -143,8 +148,6 @@ def score_song(song: dict, clean_t: str, cleaned_artists: list[str], primary_art
     norm_s_artist = normalise(s_artist)
 
     t_score = fuzzy(clean_t, norm_s_title)
-    
-    # Extract structural normalized copies for multi-era alias protection
     norm_primary = normalise(primary_artist)
     
     # Hardcoded Artist Alias Resolution Pass
@@ -181,8 +184,6 @@ def search_navidrome(api_get, artists: list[str], title: str, threshold: float) 
     primary_artist_no_punct = re.sub(r'[^\w\s]', '', primary_artist)
     clean_t = normalise(title)
     
-    is_stubborn = clean_t in ["orange crush", "stand", "tribute", "home again", "all along the watchtower"]
-
     # If parsing Shihad, automatically stack query variations for the API
     if normalise(primary_artist) in ["shihad", "pacifier"]:
         queries = ["Shihad " + clean_t, "Pacifier " + clean_t, clean_t]
@@ -194,15 +195,9 @@ def search_navidrome(api_get, artists: list[str], title: str, threshold: float) 
             clean_t,                                
         ]
 
-    if is_stubborn:
-        print(f"\n\n🔍 [LIVE DEBUG] Troubleshooting match for: {primary_artist} — {title}")
-
     for query in list(dict.fromkeys(queries)):
         if not query or len(query.strip()) < 2: 
             continue
-            
-        if is_stubborn:
-            print(f"  👉 Querying API: '{query.strip()}'")
 
         resp = api_get("search3.view", {
             "query": query.strip(), 
@@ -214,20 +209,13 @@ def search_navidrome(api_get, artists: list[str], title: str, threshold: float) 
         songs = resp.get("subsonic-response", {}).get("searchResult3", {}).get("song", [])
         for song in songs:
             s = score_song(song, clean_t, cleaned_artists, primary_artist)
-            if is_stubborn:
-                print(f"     ↳ Match Found: '{song.get('artist')} — {song.get('title')}' [Score: {s:.2f}]")
             if s >= best_score:  
                 best_score, best_match = s, song
 
     if best_score >= threshold:
-        if is_stubborn:
-            print(f"  ✅ SUCCESS: Matched with score {best_score:.2f}\n")
         return best_match
 
     # Deep Fallback Pass
-    if is_stubborn:
-        print(f"  ⚠️  Low scores. Attempting high-volume fallback search for full artist catalog.")
-
     fallback_targets = [primary_artist, primary_artist_no_punct]
     if normalise(primary_artist) in ["shihad", "pacifier"]:
         fallback_targets.extend(["Shihad", "Pacifier"])
@@ -243,12 +231,6 @@ def search_navidrome(api_get, artists: list[str], title: str, threshold: float) 
             s = score_song(song, clean_t, cleaned_artists, primary_artist)
             if s >= best_score:
                 best_score, best_match = s, song
-
-    if is_stubborn:
-        if best_score >= threshold:
-            print(f"  ✅ SUCCESS IN FALLBACK: Matched '{best_match.get('artist')} — {best_match.get('title')}' ({best_score:.2f})\n")
-        else:
-            print(f"  ❌ FAILURE: Best found was '{best_match.get('artist') if best_match else 'None'} — {best_match.get('title') if best_match else 'None'}' with score {best_score:.2f} (Needs {threshold})\n")
 
     return best_match if best_score >= threshold else None
 
@@ -355,13 +337,11 @@ def main():
     found, missing = [], []
 
     for i, track in enumerate(tracks, 1):
-        is_stubborn = normalise(track["title"]) in ["orange crush", "stand", "tribute", "home again", "all along the watchtower"]
-        if not is_stubborn:
-            sys.stdout.write(
-                f"\r  [{i:4d}/{len(tracks)}] "
-                f"{track['artist'][:30]:<30} — {track['title'][:35]:<35}"
-            )
-            sys.stdout.flush()
+        sys.stdout.write(
+            f"\r  [{i:4d}/{len(tracks)}] "
+            f"{track['artist'][:30]:<30} — {track['title'][:35]:<35}"
+        )
+        sys.stdout.flush()
 
         match = search_navidrome(api_get, track["artists"], track["title"], threshold)
         if match:
@@ -432,3 +412,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+```
