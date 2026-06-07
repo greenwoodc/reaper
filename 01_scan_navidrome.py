@@ -277,3 +277,91 @@ def main():
         "It's The End Of The World As We Know It (And I Feel Fine)"
     ]
     for item in test_items:
+        print(f"    Original: {item:<60} → Normalised: {normalise(item)}")
+    print("──────────────────────────────────────────────────────────────\n")
+    # ─────────────────────────────────────────────────────────────────────────
+
+    print(f"Reading {csv_path}...")
+    tracks = read_csv(csv_path, args.rank_col)
+    print(f"Loaded {len(tracks)} tracks. Scanning Navidrome...\n")
+
+    existing_found_uris, existing_missing_titles = load_existing(found_file, missing_file)
+
+    found, missing = [], []
+
+    for i, track in enumerate(tracks, 1):
+        sys.stdout.write(
+            f"\r  [{i:4d}/{len(tracks)}] "
+            f"{track['artist'][:30]:<30} — {track['title'][:35]:<35}"
+        )
+        sys.stdout.flush()
+
+        match = search_navidrome(api_get, track["artists"], track["title"], threshold)
+        if match:
+            entry = {
+                "title":     track["title"],
+                "artist":    track["artist"],
+                "uri":       track["uri"],
+                "nd_id":     match["id"],
+                "nd_title":  match.get("title", ""),
+                "nd_artist": match.get("artist", ""),
+            }
+            if track["rank"] is not None:
+                entry["rank"] = track["rank"]
+            found.append(entry)
+        else:
+            missing.append(track)
+
+        time.sleep(0.01)
+
+    print(f"\n\n{'─'*62}")
+    print(f"  Found in collection : {len(found):>4}")
+    print(f"  Missing             : {len(missing):>4}")
+    print(f"{'─'*62}\n")
+
+    if args.dry_run:
+        newly_found  = [t for t in found if t["title"] in existing_missing_titles]
+        newly_missing = [t for t in missing if t["uri"] in existing_found_uris]
+
+        print(f"{'─'*62}")
+        print(f"  DRY RUN DIFF vs current files")
+        print(f"{'─'*62}")
+        print(f"  Tracks now found that were missing : {len(newly_found):>4}")
+        print(f"  Tracks now missing that were found : {len(newly_missing):>4}")
+        print(f"{'─'*62}\n")
+
+        if newly_found:
+            print("✓ Newly matched (would be removed from missing_tracks.csv):")
+            for t in newly_found:
+                print(f"    {t['artist']:<30} — {t['title']}")
+                print(f"      matched → {t['nd_artist']} — {t['nd_title']}")
+
+        if newly_missing:
+            print("\n⚠️  Newly missing (would be removed from found_tracks.json):")
+            for t in newly_missing:
+                print(f"    {t['artist']:<30} — {t['title']}")
+
+        if not newly_found and not newly_missing:
+            print("  No changes detected — results identical to current files.")
+
+        print("\n[DRY RUN] No files written.")
+        return
+
+    with open(found_file, "w") as f:
+        json.dump(found, f, indent=2)
+    print(f"✓ {found_file}  ({len(found)} tracks)")
+
+    with open(missing_file, "w", newline='', encoding='utf-8') as f:
+        writer = csv.DictWriter(f, fieldnames=["artist", "title", "album"] +
+                                (["rank"] if args.rank_col else []))
+        writer.writeheader()
+        for t in missing:
+            row = {"artist": t["artist"], "title": t["title"], "album": t["album"]}
+            if args.rank_col:
+                row["rank"] = t["rank"]
+            writer.writerow(row)
+    print(f"✓ {missing_file}  ({len(missing)} tracks to download)")
+
+
+if __name__ == "__main__":
+    main()
