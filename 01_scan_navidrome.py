@@ -126,7 +126,9 @@ def fuzzy(a: str, b: str) -> float:
 
 
 def normalise(s: str) -> str:
-    """Strip noise and normalise text before fuzzy matching."""
+    """Strip noise and normalise text before fuzzy matching comparison."""
+    if not s:
+        return ""
     s = re.sub(
         r'\(.*?(remaster|remastered|deluxe|edition|version|mix|mono|stereo|live|feat|bonus).*?\)',
         '', s, flags=re.IGNORECASE
@@ -156,8 +158,7 @@ def strip_feat(title: str) -> str:
 def search_navidrome(api_get, artists: list[str], title: str, threshold: float) -> dict | None:
     """
     Search Navidrome for a song.
-    Two-pass: title search first, then artist search as fallback.
-    Score weighted 55% title / 45% artist.
+    Keeps the API query simple while keeping limits higher to maximize match potential.
     """
     best_score, best_match = 0.0, None
 
@@ -169,12 +170,21 @@ def search_navidrome(api_get, artists: list[str], title: str, threshold: float) 
         )
         return t * 0.55 + a * 0.45
 
-    # Pass 1: title search (with and without feat. suffix)
-    title_queries = list(dict.fromkeys([normalise(title), normalise(strip_feat(title))]))
+    # Base raw queries to pass to the API (Don't run full normalise on these!)
+    # Just strip out explicit features and clean trailing spaces so Navidrome can parse it natively
+    raw_title = strip_feat(title).strip()
+    
+    title_queries = list(dict.fromkeys([raw_title, title]))
+    
+    # Pass 1: Title Search (Return up to 40 tracks to avoid truncation skips)
     for query in title_queries:
+        if not query:
+            continue
         resp = api_get("search3.view", {
-            "query": query, "songCount": 10,
-            "artistCount": 0, "albumCount": 0,
+            "query": query, 
+            "songCount": 40,
+            "artistCount": 0, 
+            "albumCount": 0,
         })
         for song in resp.get("subsonic-response", {}).get("searchResult3", {}).get("song", []):
             s = score_song(song)
@@ -184,11 +194,13 @@ def search_navidrome(api_get, artists: list[str], title: str, threshold: float) 
     if best_score >= threshold:
         return best_match
 
-    # Pass 2: artist search fallback
+    # Pass 2: Artist search fallback (Return up to 50 items)
     for artist in artists:
         resp = api_get("search3.view", {
-            "query": normalise(artist), "songCount": 20,
-            "artistCount": 0, "albumCount": 0,
+            "query": artist, 
+            "songCount": 50,
+            "artistCount": 0, 
+            "albumCount": 0,
         })
         for song in resp.get("subsonic-response", {}).get("searchResult3", {}).get("song", []):
             s = score_song(song)
