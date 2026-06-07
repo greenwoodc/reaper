@@ -135,7 +135,7 @@ def normalise(s: str) -> str:
 
 
 def score_song(song: dict, clean_t: str, cleaned_artists: list[str], primary_artist: str) -> float:
-    """Unified engine to cleanly calculate track precision weightings."""
+    """Unified engine to calculate precise cross-field similarity weightings."""
     s_title = song.get("title", "")
     s_artist = song.get("artist", "")
     
@@ -145,14 +145,14 @@ def score_song(song: dict, clean_t: str, cleaned_artists: list[str], primary_art
     t_score = fuzzy(clean_t, norm_s_title)
     a_score = max(fuzzy(normalise(artist), norm_s_artist) for artist in cleaned_artists)
 
-    # Compilation Check
+    # Compilation Hack
     if norm_s_artist == "various artists" and normalise(primary_artist) in norm_s_title:
         a_score = 1.0
         if " - " in norm_s_title:
             title_part = normalise(s_title.split(" - ")[0])
             t_score = max(t_score, fuzzy(clean_t, title_part))
 
-    # Title Anchor Boost (e.g. Shihad/Pacifier fallback preservation)
+    # Title Anchor Boost (Preserves matches for tracks like Shihad/Pacifier)
     if norm_s_title == clean_t and a_score >= 0.70:
         a_score = max(a_score, 0.90)
 
@@ -172,7 +172,7 @@ def search_navidrome(api_get, artists: list[str], title: str, threshold: float) 
     
     is_stubborn = clean_t in ["orange crush", "stand", "tribute", "home again", "all along the watchtower"]
 
-    # Queries tree configuration
+    # Search queries execution priority layout
     queries = [
         f"{primary_artist} {clean_t}",          
         f"{primary_artist_no_punct} {clean_t}", 
@@ -202,7 +202,7 @@ def search_navidrome(api_get, artists: list[str], title: str, threshold: float) 
             s = score_song(song, clean_t, cleaned_artists, primary_artist)
             if is_stubborn:
                 print(f"     ↳ Match Found: '{song.get('artist')} — {song.get('title')}' [Score: {s:.2f}]")
-            if s >= best_score:  # Inclusive assignment solves identical boundary matches
+            if s >= best_score:  # Inclusive comparison catches exact boundary ties cleanly
                 best_score, best_match = s, song
 
     if best_score >= threshold:
@@ -210,14 +210,14 @@ def search_navidrome(api_get, artists: list[str], title: str, threshold: float) 
             print(f"  ✅ SUCCESS: Matched with score {best_score:.2f}\n")
         return best_match
 
-    # Deep Fallback Pass — Expand buffer limits to force truncation bypass
+    # Deep Fallback Pass — Force a complete catalog extraction to bypass keyword index truncation limits
     if is_stubborn:
-        print(f"  ⚠️  Low scores. Attempting absolute fallback search for artist catalogs.")
+        print(f"  ⚠️  Low scores. Attempting high-volume fallback search for full artist catalog.")
 
     for fallback_query in list(dict.fromkeys([primary_artist, primary_artist_no_punct])):
         resp = api_get("search3.view", {
             "query": fallback_query, 
-            "songCount": 500, # Expanded volume catch
+            "songCount": 600, # Large volume payload configuration
             "artistCount": 0,
             "albumCount": 0
         })
