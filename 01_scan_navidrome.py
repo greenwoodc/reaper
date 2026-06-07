@@ -346,21 +346,6 @@ def main():
         print(f"Ranking  : none (CSV order preserved)")
     print()
 
-    print("🛠️  [DEBUG] Normalisation String Cleanup Transformations:")
-    test_items = [
-        "All Along the Watchtower",
-        "The Man Who Sold The World - Live",
-        "Just Like Heaven - Remastered 2006",
-        "Reckless (Don't Be So...) - Remastered",
-        "Say It Ain't So - Original Mix",
-        "Orange Crush - Remastered 2013",
-        "Run Like Hell - Live",
-        "It's The End Of The World As We Know It (And I Feel Fine)"
-    ]
-    for item in test_items:
-        print(f"    Original: {item:<60} → Normalised: {normalise(item)}")
-    print("──────────────────────────────────────────────────────────────\n")
-
     print(f"Reading {csv_path}...")
     tracks = read_csv(csv_path, args.rank_col)
     print(f"Loaded {len(tracks)} tracks. Scanning Navidrome...\n")
