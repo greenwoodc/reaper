@@ -112,7 +112,8 @@ docker compose run --rm --no-deps sldl \
     "/config/active_search.csv" \
     --artist-col "artist" \
     --title-col  "title" \
-    --max-retries 2 \
+    --max-retries 1 \
+    --request-timeout 30 \
     2>&1 | tee "$PLAYLIST_DIR/download_log.txt"
 
 echo ""
