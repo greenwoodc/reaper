@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 Clean up search phrases in missing_tracks.csv for better Soulseek hits.
-Leverages the robust normalization logic built for Phase 1.
+Leverages the robust normalization logic built for Phase 1 with added
+protection against trailing parenthetical collaborations.
 """
 
 import argparse
@@ -45,20 +46,20 @@ def clean_artist(artist: str) -> str:
     
     # Shihad / Pacifier Multi-era Soulseek search enhancement
     if artist.lower() in ["shihad", "pacifier", "shihad/pacifier"]:
-        # Giving both names separated by a space often yields the best hits on Soulseek
         return "Shihad Pacifier"
 
     return artist.strip()
 
 
 def clean_title(title: str) -> str:
-    """Apply the refined Phase 1 right-split logic to strip metadata bloat safely."""
+    """Apply the refined Phase 1 right-split logic to strip metadata and collab bloat safely."""
     if not title:
         return ""
 
-    # 1. Strip structural parenthesis blocks matching metadata words
+    # 1. Strip structural parenthesis blocks matching metadata keywords OR collaboration cues
+    # Added: 'with', 'and', 'duet', 'featuring', 'feat', 'vs', 'presents', 'pres'
     title = re.sub(
-        r'\(.*?(remaster|remastered|deluxe|edition|version|mix|mono|stereo|live|feat|featuring|bonus|original|studio|20\d{2}|19\d{2}).*?\)',
+        r'\(.*?(remaster|remastered|deluxe|edition|version|mix|mono|stereo|live|feat|featuring|bonus|original|studio|20\d{2}|19\d{2}|with|and|duet|vs|presents|pres).*?\)',
         '', title, flags=re.IGNORECASE
     )
 
@@ -144,7 +145,7 @@ def main():
         for track in cleaned:
             writer.writerow(track)
 
-    # Overwrite the original target file atomatically
+    # Overwrite the original target file atomically
     shutil.move(str(output_path), str(csv_path))
     print(f"✓ Replaced file with Soulseek-optimized version: {csv_path}\n")
 
