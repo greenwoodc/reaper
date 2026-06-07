@@ -134,10 +134,34 @@ def normalise(s: str) -> str:
     return s.strip()
 
 
+def score_song(song: dict, clean_t: str, cleaned_artists: list[str], primary_artist: str) -> float:
+    """Unified engine to cleanly calculate track precision weightings."""
+    s_title = song.get("title", "")
+    s_artist = song.get("artist", "")
+    
+    norm_s_title = normalise(s_title)
+    norm_s_artist = normalise(s_artist)
+
+    t_score = fuzzy(clean_t, norm_s_title)
+    a_score = max(fuzzy(normalise(artist), norm_s_artist) for artist in cleaned_artists)
+
+    # Compilation Check
+    if norm_s_artist == "various artists" and normalise(primary_artist) in norm_s_title:
+        a_score = 1.0
+        if " - " in norm_s_title:
+            title_part = normalise(s_title.split(" - ")[0])
+            t_score = max(t_score, fuzzy(clean_t, title_part))
+
+    # Title Anchor Boost (e.g. Shihad/Pacifier fallback preservation)
+    if norm_s_title == clean_t and a_score >= 0.70:
+        a_score = max(a_score, 0.90)
+
+    return t_score * 0.60 + a_score * 0.40
+
+
 def search_navidrome(api_get, artists: list[str], title: str, threshold: float) -> dict | None:
     best_score, best_match = 0.0, None
 
-    # Handle multi-artists cleanly
     cleaned_artists = []
     for artist in artists:
         cleaned_artists.extend([a.strip() for a in artist.split(';') if a.strip()])
@@ -146,39 +170,14 @@ def search_navidrome(api_get, artists: list[str], title: str, threshold: float) 
     primary_artist_no_punct = re.sub(r'[^\w\s]', '', primary_artist)
     clean_t = normalise(title)
     
-    # Flags for live logging of the stubborn test targets
     is_stubborn = clean_t in ["orange crush", "stand", "tribute", "home again", "all along the watchtower"]
 
-    def score_song(song: dict) -> float:
-        s_title = song.get("title", "")
-        s_artist = song.get("artist", "")
-        
-        norm_s_title = normalise(s_title)
-        norm_s_artist = normalise(s_artist)
-
-        t_score = fuzzy(clean_t, norm_s_title)
-        a_score = max(fuzzy(normalise(artist), norm_s_artist) for artist in cleaned_artists)
-
-        # Compilation Hack: If compilation is tagged "Various Artists", look for the missing artist inside the title tag
-        if norm_s_artist == "various artists" and normalise(primary_artist) in norm_s_title:
-            a_score = 1.0
-            # Isolate the clean title portion if delimited like "Tribute - Tenacious D"
-            if " - " in norm_s_title:
-                title_part = normalise(s_title.split(" - ")[0])
-                t_score = max(t_score, fuzzy(clean_t, title_part))
-
-        # Title Anchor Boost: If track name matches flawlessly, lower the artist match penalty for bands with side tags (e.g. Shihad/Pacifier)
-        if norm_s_title == clean_t and a_score >= 0.70:
-            a_score = max(a_score, 0.90)
-
-        return t_score * 0.60 + a_score * 0.40
-
-    # Extended query list to navigate absolute literal indexes (like R.E.M.)
+    # Queries tree configuration
     queries = [
-        f"{primary_artist} {clean_t}",          # 1. "R.E.M. orange crush"
-        f"{primary_artist_no_punct} {clean_t}", # 2. "REM orange crush"
-        title,                                  # 3. Exact CSV title
-        clean_t,                                # 4. Normalised track title
+        f"{primary_artist} {clean_t}",          
+        f"{primary_artist_no_punct} {clean_t}", 
+        title,                                  
+        clean_t,                                
     ]
 
     if is_stubborn:
@@ -200,32 +199,31 @@ def search_navidrome(api_get, artists: list[str], title: str, threshold: float) 
         
         songs = resp.get("subsonic-response", {}).get("searchResult3", {}).get("song", [])
         for song in songs:
-            s = score_song(song)
+            s = score_song(song, clean_t, cleaned_artists, primary_artist)
             if is_stubborn:
                 print(f"     ↳ Match Found: '{song.get('artist')} — {song.get('title')}' [Score: {s:.2f}]")
-            if s > best_score:
+            if s >= best_score:  # Inclusive assignment solves identical boundary matches
                 best_score, best_match = s, song
 
-    # Inclusive validation condition catches exact bounds smoothly (e.g., matching exact 0.85)
     if best_score >= threshold:
         if is_stubborn:
             print(f"  ✅ SUCCESS: Matched with score {best_score:.2f}\n")
         return best_match
 
-    # Deep Fallback Pass — Try searching the standalone artist names raw
+    # Deep Fallback Pass — Expand buffer limits to force truncation bypass
     if is_stubborn:
-        print(f"  ⚠️  Low scores. Attempting absolute fallback search for artist indexes.")
+        print(f"  ⚠️  Low scores. Attempting absolute fallback search for artist catalogs.")
 
     for fallback_query in list(dict.fromkeys([primary_artist, primary_artist_no_punct])):
         resp = api_get("search3.view", {
             "query": fallback_query, 
-            "songCount": 150,
+            "songCount": 500, # Expanded volume catch
             "artistCount": 0,
             "albumCount": 0
         })
         for song in resp.get("subsonic-response", {}).get("searchResult3", {}).get("song", []):
-            s = score_song(song)
-            if s > best_score:
+            s = score_song(song, clean_t, cleaned_artists, primary_artist)
+            if s >= best_score:
                 best_score, best_match = s, song
 
     if is_stubborn:
