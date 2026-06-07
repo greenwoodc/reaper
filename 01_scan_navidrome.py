@@ -117,154 +117,54 @@ def strip_feat(title: str) -> str:
     ).strip()
 
 
-def normalise(s: str) -> str:
-    """Aggressively strip noise, remastered years, live versions, and metadata bloat."""
-    if not s:
-        return ""
-    
+def normalise(s: str, aggressive=False) -> str:
+    """
+    Tiered normalisation. 
+    Aggressive=False: Keeps title integrity, just strips obvious metadata.
+    Aggressive=True: Strips everything but the core title.
+    """
+    if not s: return ""
     s = s.lower()
     
-    # 1. Clean up parenthesis bloat
-    s = re.sub(
-        r'\(.*?(remaster|remastered|deluxe|edition|version|mix|mono|stereo|live|feat|bonus|\d{4}).*?\)',
-        '', s
-    )
+    # Common noise to ALWAYS remove
+    s = re.sub(r'\(.*?(remaster|live|mix|bonus|edition|deluxe).*?\)', '', s)
+    s = re.sub(r'\s+-\s+(remaster|live|mix|version|edit|20\d{2}|19\d{2}).*', '', s)
     
-    # 2. Fix the greedy hyphen bug: Split from right side to avoid breaking titles like "Thirty-Three"
-    if " - " in s:
-        parts = s.split(" - ")
-        # If the last segment looks like metadata bloat, discard it
-        if any(word in parts[-1] for word in ["remaster", "live", "acoustic", "version", "edit", "201", "202", "199"]):
-            s = " - ".join(parts[:-1])
-
-    # 3. Handle remaining common multi-artist text or replacement clutter
-    s = re.sub(r'\s*(feat\.?|ft\.?|featuring)\s+.*', '', s)
-    s = re.sub(r'[/&+;]', ' and ', s)
-    s = re.sub(r"'", '', s)
-    s = re.sub(r'[^\w\s-]', ' ', s) # Keep inner hyphens intact
-    s = re.sub(r'\s+', ' ', s)
+    if aggressive:
+        # Strip all punctuation and special characters for deep fuzzy matching
+        s = re.sub(r'[^\w\s]', ' ', s)
+        s = re.sub(r'\s+', ' ', s)
+        s = ''.join(c for c in unicodedata.normalize('NFD', s) if unicodedata.category(c) != 'Mn')
     
-    # 4. Strip unicode accents
-    s = ''.join(
-        c for c in unicodedata.normalize('NFD', s)
-        if unicodedata.category(c) != 'Mn'
-    )
     return s.strip()
 
-
 def search_navidrome(api_get, artists: list[str], title: str, threshold: float) -> dict | None:
-    """
-    Search Navidrome with resilient handling for multi-artists and messy track names.
-    """
     best_score, best_match = 0.0, None
+    cleaned_artists = [a.strip() for artist in artists for a in artist.split(';') if a.strip()]
 
-    # Handle semicolon-separated multi-artists (e.g., "Queen;David Bowie")
-    cleaned_artists = []
-    for artist in artists:
-        cleaned_artists.extend([a.strip() for a in artist.split(';') if a.strip()])
+    # 1. TIER: Strict Match (Original title + Light cleanup)
+    # Navidrome is great at finding exact matches.
+    resp = api_get("search3.view", {"query": title, "songCount": 20})
+    for song in resp.get("subsonic-response", {}).get("searchResult3", {}).get("song", []):
+        t_score = fuzzy(title.lower(), song.get("title", "").lower())
+        if t_score > 0.95: return song # Found it!
 
-    def score_song(song: dict) -> float:
-        t = fuzzy(normalise(title), normalise(song.get("title", "")))
-        a = max(
-            fuzzy(normalise(artist), normalise(song.get("artist", "")))
-            for artist in cleaned_artists
-        )
-        # Fallback layout check to make sure close scores match smoothly
-        return t * 0.60 + a * 0.40
-
-    # Base raw search phrases (Broad strings for Subsonic's index search)
-    # Ensure splitting title doesn't accidentally destroy "Thirty-Three"
-    clean_title = title.split(" - ")
-    if len(clean_title) > 1 and any(w in clean_title[-1].lower() for w in ["remaster", "201"]):
-        clean_title = clean_title[0].strip()
-    else:
-        clean_title = title.strip()
-
-    title_queries = list(dict.fromkeys([clean_title, title]))
+    # 2. TIER: Aggressive Fuzzy Search
+    # If Strict fails, we use the normalized versions
+    norm_title = normalise(title, aggressive=True)
+    resp = api_get("search3.view", {"query": norm_title, "songCount": 50})
     
-    # Pass 1: Title Search
-    for query in title_queries:
-        if not query:
-            continue
-        resp = api_get("search3.view", {
-            "query": query, 
-            "songCount": 60, # Increased lookahead cap
-            "artistCount": 0, 
-            "albumCount": 0,
-        })
-        for song in resp.get("subsonic-response", {}).get("searchResult3", {}).get("song", []):
-            s = score_song(song)
-            if s > best_score:
-                best_score, best_match = s, song
-
-    if best_score >= threshold:
-        return best_match
-
-    # Pass 2: Artist Search Fallback
-    for artist in cleaned_artists:
-        resp = api_get("search3.view", {
-            "query": artist, 
-            "songCount": 60,
-            "artistCount": 0, 
-            "albumCount": 0,
-        })
-        for song in resp.get("subsonic-response", {}).get("searchResult3", {}).get("song", []):
-            s = score_song(song)
-            if s > best_score:
-                best_score, best_match = s, song
+    for song in resp.get("subsonic-response", {}).get("searchResult3", {}).get("song", []):
+        s_title = normalise(song.get("title", ""), aggressive=True)
+        s_artist = max([fuzzy(normalise(a, aggressive=True), normalise(song.get("artist", ""), aggressive=True)) for a in cleaned_artists] + [0])
+        
+        # Combine: Title weight is higher for tracks
+        total_score = (fuzzy(norm_title, s_title) * 0.7) + (s_artist * 0.3)
+        
+        if total_score > best_score:
+            best_score, best_match = total_score, song
 
     return best_match if best_score >= threshold else None
-
-
-def load_existing(found_file: Path, missing_file: Path) -> tuple[set[str], set[str]]:
-    found_uris = set()
-    missing_titles = set()
-
-    if found_file.exists():
-        with open(found_file) as f:
-            for t in json.load(f):
-                found_uris.add(t.get("uri", t.get("title", "")))
-
-    if missing_file.exists():
-        with open(missing_file, newline='', encoding='utf-8') as f:
-            for row in csv.DictReader(f):
-                missing_titles.add(row.get("title", ""))
-
-    return found_uris, missing_titles
-
-
-def read_csv(csv_path: Path, rank_col: str | None) -> list[dict]:
-    """Read Exportify CSV and return list of track dicts."""
-    tracks = []
-    with open(csv_path, newline='', encoding='utf-8-sig') as f:
-        reader = csv.DictReader(f)
-        rows = list(reader)
-
-    for i, row in enumerate(rows):
-        all_artists = [a.strip() for a in row["Artist Name(s)"].split(",")]
-
-        if rank_col:
-            try:
-                rank = int(row[rank_col])
-            except (KeyError, ValueError):
-                print(f"[WARN] Could not read rank from column '{rank_col}' on row {i+1}, using row order.")
-                rank = i + 1
-        else:
-            rank = None
-
-        tracks.append({
-            "rank":    rank,
-            "title":   row["Track Name"],
-            "artists": all_artists,
-            "artist":  all_artists[0],
-            "album":   row.get("Album Name", ""),
-            "uri":     row.get("Track URI", ""),
-        })
-
-    if rank_col:
-        tracks.sort(key=lambda x: x["rank"])
-
-    return tracks
 
 
 def main():
