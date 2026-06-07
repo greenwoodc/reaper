@@ -111,60 +111,115 @@ def fuzzy(a: str, b: str) -> float:
     return SequenceMatcher(None, a.lower().strip(), b.lower().strip()).ratio()
 
 
-def strip_feat(title: str) -> str:
-    return re.sub(
-        r'\s*(feat\.?|ft\.?|featuring)\s+.*', '', title, flags=re.IGNORECASE
-    ).strip()
-
-
-def normalise(s: str, aggressive=False) -> str:
-    """
-    Tiered normalisation. 
-    Aggressive=False: Keeps title integrity, just strips obvious metadata.
-    Aggressive=True: Strips everything but the core title.
-    """
-    if not s: return ""
+def normalise(s: str) -> str:
+    """Ruthlessly strip noise, remastered years, live versions, and metadata bloat."""
+    if not s:
+        return ""
     s = s.lower()
     
-    # Common noise to ALWAYS remove
-    s = re.sub(r'\(.*?(remaster|live|mix|bonus|edition|deluxe).*?\)', '', s)
-    s = re.sub(r'\s+-\s+(remaster|live|mix|version|edit|20\d{2}|19\d{2}).*', '', s)
+    # 1. Remove anything in parentheses that looks like metadata
+    s = re.sub(r'\(.*?(remaster|remastered|deluxe|edition|version|mix|mono|stereo|live|feat|bonus|original|studio|20\d{2}|19\d{2}).*?\)', '', s)
     
-    if aggressive:
-        # Strip all punctuation and special characters for deep fuzzy matching
-        s = re.sub(r'[^\w\s]', ' ', s)
-        s = re.sub(r'\s+', ' ', s)
-        s = ''.join(c for c in unicodedata.normalize('NFD', s) if unicodedata.category(c) != 'Mn')
+    # 2. Right-side split for hyphens to handle "Orange Crush - Remaster" vs "Thirty-Three"
+    if " - " in s:
+        parts = s.split(" - ")
+        if any(word in parts[-1] for word in ["remaster", "live", "acoustic", "version", "edit", "mix", "original", "20", "19"]):
+            s = " - ".join(parts[:-1])
+
+    # 3. Final scrub of punctuation and multi-spaces
+    s = s.replace("'", "")
+    s = re.sub(r'[^\w\s-]', ' ', s) # Keep inner hyphens
+    s = re.sub(r'\s+', ' ', s)
     
+    # 4. Strip unicode accents
+    s = ''.join(
+        c for c in unicodedata.normalize('NFD', s)
+        if unicodedata.category(c) != 'Mn'
+    )
     return s.strip()
 
+
 def search_navidrome(api_get, artists: list[str], title: str, threshold: float) -> dict | None:
+    """
+    Search Navidrome with resilient handling for multi-artists and messy track names.
+    """
     best_score, best_match = 0.0, None
-    cleaned_artists = [a.strip() for artist in artists for a in artist.split(';') if a.strip()]
 
-    # 1. TIER: Strict Match (Original title + Light cleanup)
-    # Navidrome is great at finding exact matches.
-    resp = api_get("search3.view", {"query": title, "songCount": 20})
-    for song in resp.get("subsonic-response", {}).get("searchResult3", {}).get("song", []):
-        t_score = fuzzy(title.lower(), song.get("title", "").lower())
-        if t_score > 0.95: return song # Found it!
+    cleaned_artists = []
+    for artist in artists:
+        cleaned_artists.extend([a.strip() for a in artist.split(';') if a.strip()])
 
-    # 2. TIER: Aggressive Fuzzy Search
-    # If Strict fails, we use the normalized versions
-    norm_title = normalise(title, aggressive=True)
-    resp = api_get("search3.view", {"query": norm_title, "songCount": 50})
-    
-    for song in resp.get("subsonic-response", {}).get("searchResult3", {}).get("song", []):
-        s_title = normalise(song.get("title", ""), aggressive=True)
-        s_artist = max([fuzzy(normalise(a, aggressive=True), normalise(song.get("artist", ""), aggressive=True)) for a in cleaned_artists] + [0])
-        
-        # Combine: Title weight is higher for tracks
-        total_score = (fuzzy(norm_title, s_title) * 0.7) + (s_artist * 0.3)
-        
-        if total_score > best_score:
-            best_score, best_match = total_score, song
+    def score_song(song: dict) -> float:
+        t = fuzzy(normalise(title), normalise(song.get("title", "")))
+        a = max(fuzzy(normalise(artist), normalise(song.get("artist", ""))) for artist in cleaned_artists)
+        return t * 0.60 + a * 0.40
+
+    clean_t = normalise(title)
+    queries = [title, clean_t]
+    if " " in clean_t:
+        queries.append(clean_t.split(" ")[0] + " " + cleaned_artists[0])
+
+    for query in list(dict.fromkeys(queries)):
+        if not query: 
+            continue
+        resp = api_get("search3.view", {"query": query, "songCount": 100})
+        for song in resp.get("subsonic-response", {}).get("searchResult3", {}).get("song", []):
+            s = score_song(song)
+            if s > best_score:
+                best_score, best_match = s, song
 
     return best_match if best_score >= threshold else None
+
+
+def load_existing(found_file: Path, missing_file: Path) -> tuple[set[str], set[str]]:
+    found_uris = set()
+    missing_titles = set()
+
+    if found_file.exists():
+        with open(found_file) as f:
+            for t in json.load(f):
+                found_uris.add(t.get("uri", t.get("title", "")))
+
+    if missing_file.exists():
+        with open(missing_file, newline='', encoding='utf-8') as f:
+            for row in csv.DictReader(f):
+                missing_titles.add(row.get("title", ""))
+
+    return found_uris, missing_titles
+
+
+def read_csv(csv_path: Path, rank_col: str | None) -> list[dict]:
+    """Read Exportify CSV and return list of track dicts."""
+    tracks = []
+    with open(csv_path, newline='', encoding='utf-8-sig') as f:
+        reader = csv.DictReader(f)
+        rows = list(reader)
+
+    for i, row in enumerate(rows):
+        all_artists = [a.strip() for a in row["Artist Name(s)"].split(",")]
+
+        if rank_col:
+            try:
+                rank = int(row[rank_col])
+            except (KeyError, ValueError):
+                print(f"[WARN] Could not read rank from column '{rank_col}' on row {i+1}, using row order.")
+                rank = i + 1
+        else:
+            rank = None
+
+        tracks.append({
+            "rank":    rank,
+            "title":   row["Track Name"],
+            "artists": all_artists,
+            "artist":  all_artists[0],
+            "album":   row.get("Album Name", ""),
+            "uri":     row.get("Track URI", ""),
+        })
+
+    if rank_col:
+        tracks.sort(key=lambda x: x["rank"])
+
+    return tracks
 
 
 def main():
@@ -209,101 +264,16 @@ def main():
         print(f"Ranking  : none (CSV order preserved)")
     print()
 
-    # ── TROUBLESHOOTING / DIAGNOSTIC PRINT ───────────────────────────────────
+    # ── UPDATED TROUBLESHOOTING INPUTS ───────────────────────────────────────
     print("🛠️  [DEBUG] Normalisation String Cleanup Transformations:")
     test_items = [
-        "Thirty-Three - Remastered 2012",
+        "All Along the Watchtower",
+        "The Man Who Sold The World - Live",
+        "Just Like Heaven - Remastered 2006",
+        "Reckless (Don't Be So...) - Remastered",
+        "Say It Ain't So - Original Mix",
         "Orange Crush - Remastered 2013",
-        "Fiji Baby",
-        "Wish You Were Here",
-        "Diamonds On The Inside"
+        "Run Like Hell - Live",
+        "It's The End Of The World As We Know It (And I Feel Fine)"
     ]
     for item in test_items:
-        print(f"    Original: {item:<35} → Normalised: {normalise(item)}")
-    print("──────────────────────────────────────────────────────────────\n")
-    # ─────────────────────────────────────────────────────────────────────────
-
-    print(f"Reading {csv_path}...")
-    tracks = read_csv(csv_path, args.rank_col)
-    print(f"Loaded {len(tracks)} tracks. Scanning Navidrome...\n")
-
-    existing_found_uris, existing_missing_titles = load_existing(found_file, missing_file)
-
-    found, missing = [], []
-
-    for i, track in enumerate(tracks, 1):
-        sys.stdout.write(
-            f"\r  [{i:4d}/{len(tracks)}] "
-            f"{track['artist'][:30]:<30} — {track['title'][:35]:<35}"
-        )
-        sys.stdout.flush()
-
-        match = search_navidrome(api_get, track["artists"], track["title"], threshold)
-        if match:
-            entry = {
-                "title":     track["title"],
-                "artist":    track["artist"],
-                "uri":       track["uri"],
-                "nd_id":     match["id"],
-                "nd_title":  match.get("title", ""),
-                "nd_artist": match.get("artist", ""),
-            }
-            if track["rank"] is not None:
-                entry["rank"] = track["rank"]
-            found.append(entry)
-        else:
-            missing.append(track)
-
-        time.sleep(0.01)
-
-    print(f"\n\n{'─'*62}")
-    print(f"  Found in collection : {len(found):>4}")
-    print(f"  Missing             : {len(missing):>4}")
-    print(f"{'─'*62}\n")
-
-    if args.dry_run:
-        newly_found  = [t for t in found if t["title"] in existing_missing_titles]
-        newly_missing = [t for t in missing if t["uri"] in existing_found_uris]
-
-        print(f"{'─'*62}")
-        print(f"  DRY RUN DIFF vs current files")
-        print(f"{'─'*62}")
-        print(f"  Tracks now found that were missing : {len(newly_found):>4}")
-        print(f"  Tracks now missing that were found : {len(newly_missing):>4}")
-        print(f"{'─'*62}\n")
-
-        if newly_found:
-            print("✓ Newly matched (would be removed from missing_tracks.csv):")
-            for t in newly_found:
-                print(f"    {t['artist']:<30} — {t['title']}")
-                print(f"      matched → {t['nd_artist']} — {t['nd_title']}")
-
-        if newly_missing:
-            print("\n⚠️  Newly missing (would be removed from found_tracks.json):")
-            for t in newly_missing:
-                print(f"    {t['artist']:<30} — {t['title']}")
-
-        if not newly_found and not newly_missing:
-            print("  No changes detected — results identical to current files.")
-
-        print("\n[DRY RUN] No files written.")
-        return
-
-    with open(found_file, "w") as f:
-        json.dump(found, f, indent=2)
-    print(f"✓ {found_file}  ({len(found)} tracks)")
-
-    with open(missing_file, "w", newline='', encoding='utf-8') as f:
-        writer = csv.DictWriter(f, fieldnames=["artist", "title", "album"] +
-                                (["rank"] if args.rank_col else []))
-        writer.writeheader()
-        for t in missing:
-            row = {"artist": t["artist"], "title": t["title"], "album": t["album"]}
-            if args.rank_col:
-                row["rank"] = t["rank"]
-            writer.writerow(row)
-    print(f"✓ {missing_file}  ({len(missing)} tracks to download)")
-
-
-if __name__ == "__main__":
-    main()
