@@ -126,63 +126,68 @@ def fuzzy(a: str, b: str) -> float:
 
 
 def normalise(s: str) -> str:
-    """Strip noise and normalise text before fuzzy matching comparison."""
+    """Aggressively strip noise, remastered years, live versions, and metadata bloat."""
     if not s:
         return ""
+    
+    # Lowercase immediately for easier matching
+    s = s.lower()
+    
+    # 1. Clean up parenthesis bloat
     s = re.sub(
-        r'\(.*?(remaster|remastered|deluxe|edition|version|mix|mono|stereo|live|feat|bonus).*?\)',
-        '', s, flags=re.IGNORECASE
+        r'\(.*?(remaster|remastered|deluxe|edition|version|mix|mono|stereo|live|feat|bonus|\d{4}).*?\)',
+        '', s
     )
-    s = re.sub(r'\s+-\s+\d{4}\s*(remaster|remastered)\b.*', '', s, flags=re.IGNORECASE)
-    s = re.sub(r'\s+-\s+(remaster|remastered)\b.*', '', s, flags=re.IGNORECASE)
-    s = re.sub(r'\s+-\s+live\b.*', '', s, flags=re.IGNORECASE)
-    s = re.sub(r'\s+-\s+acoustic\b.*', '', s, flags=re.IGNORECASE)
-    s = re.sub(r'\s*(feat\.?|ft\.?|featuring)\s+.*', '', s, flags=re.IGNORECASE)
-    s = re.sub(r'[/&+]', ' and ', s)
+    
+    # 2. Aggressively drop trailing hyphens containing years/remasters (handles "Remastered 2012" and "2012 Remaster")
+    s = re.sub(r'\s*-\s*.*?(remaster|remastered|live|acoustic|version|edit|\d{4}).*', '', s)
+    
+    # 3. Handle common multi-artist text or replacement clutter
+    s = re.sub(r'\s*(feat\.?|ft\.?|featuring)\s+.*', '', s)
+    s = re.sub(r'[/&+;]', ' and ', s)
     s = re.sub(r"'", '', s)
     s = re.sub(r'[^\w\s]', ' ', s)
     s = re.sub(r'\s+', ' ', s)
+    
+    # 4. Strip unicode accents
     s = ''.join(
         c for c in unicodedata.normalize('NFD', s)
         if unicodedata.category(c) != 'Mn'
     )
-    return s.strip().lower()
-
-
-def strip_feat(title: str) -> str:
-    return re.sub(
-        r'\s*(feat\.?|ft\.?|featuring)\s+.*', '', title, flags=re.IGNORECASE
-    ).strip()
+    return s.strip()
 
 
 def search_navidrome(api_get, artists: list[str], title: str, threshold: float) -> dict | None:
     """
-    Search Navidrome for a song.
-    Keeps the API query simple while keeping limits higher to maximize match potential.
+    Search Navidrome with resilient handling for multi-artists and messy track names.
     """
     best_score, best_match = 0.0, None
 
+    # Handle semicolon-separated multi-artists (e.g., "Queen;David Bowie")
+    cleaned_artists = []
+    for artist in artists:
+        cleaned_artists.extend([a.strip() for a in artist.split(';') if a.strip()])
+
     def score_song(song: dict) -> float:
+        # Match against thoroughly scrubbed variations
         t = fuzzy(normalise(title), normalise(song.get("title", "")))
         a = max(
             fuzzy(normalise(artist), normalise(song.get("artist", "")))
-            for artist in artists
+            for artist in cleaned_artists
         )
         return t * 0.55 + a * 0.45
 
-    # Base raw queries to pass to the API (Don't run full normalise on these!)
-    # Just strip out explicit features and clean trailing spaces so Navidrome can parse it natively
-    raw_title = strip_feat(title).strip()
+    # Base raw search phrases (Broad strings for Subsonic's index search)
+    clean_title = strip_feat(title).split(" - ")[0].strip() # Drops everything after " - "
+    title_queries = list(dict.fromkeys([clean_title, title]))
     
-    title_queries = list(dict.fromkeys([raw_title, title]))
-    
-    # Pass 1: Title Search (Return up to 40 tracks to avoid truncation skips)
+    # Pass 1: Title Search
     for query in title_queries:
         if not query:
             continue
         resp = api_get("search3.view", {
             "query": query, 
-            "songCount": 40,
+            "songCount": 40, # High cap to ensure we aren't truncated
             "artistCount": 0, 
             "albumCount": 0,
         })
@@ -194,11 +199,11 @@ def search_navidrome(api_get, artists: list[str], title: str, threshold: float) 
     if best_score >= threshold:
         return best_match
 
-    # Pass 2: Artist search fallback (Return up to 50 items)
-    for artist in artists:
+    # Pass 2: Artist Search Fallback (Querying primary artist cleanly)
+    for artist in cleaned_artists:
         resp = api_get("search3.view", {
             "query": artist, 
-            "songCount": 50,
+            "songCount": 40,
             "artistCount": 0, 
             "albumCount": 0,
         })
@@ -208,58 +213,6 @@ def search_navidrome(api_get, artists: list[str], title: str, threshold: float) 
                 best_score, best_match = s, song
 
     return best_match if best_score >= threshold else None
-
-
-def load_existing(found_file: Path, missing_file: Path) -> tuple[set[str], set[str]]:
-    found_uris = set()
-    missing_titles = set()
-
-    if found_file.exists():
-        with open(found_file) as f:
-            for t in json.load(f):
-                found_uris.add(t.get("uri", t.get("title", "")))
-
-    if missing_file.exists():
-        with open(missing_file, newline='', encoding='utf-8') as f:
-            for row in csv.DictReader(f):
-                missing_titles.add(row.get("title", ""))
-
-    return found_uris, missing_titles
-
-
-def read_csv(csv_path: Path, rank_col: str | None) -> list[dict]:
-    """Read Exportify CSV and return list of track dicts."""
-    tracks = []
-    with open(csv_path, newline='', encoding='utf-8-sig') as f:
-        reader = csv.DictReader(f)
-        rows = list(reader)
-
-    for i, row in enumerate(rows):
-        all_artists = [a.strip() for a in row["Artist Name(s)"].split(",")]
-
-        if rank_col:
-            try:
-                rank = int(row[rank_col])
-            except (KeyError, ValueError):
-                print(f"[WARN] Could not read rank from column '{rank_col}' on row {i+1}, using row order.")
-                rank = i + 1
-        else:
-            rank = None  # No ranking — order preserved from CSV
-
-        tracks.append({
-            "rank":    rank,
-            "title":   row["Track Name"],
-            "artists": all_artists,
-            "artist":  all_artists[0],
-            "album":   row.get("Album Name", ""),
-            "uri":     row.get("Track URI", ""),
-        })
-
-    # Only sort if ranking is specified
-    if rank_col:
-        tracks.sort(key=lambda x: x["rank"])
-
-    return tracks
 
 
 def main():
