@@ -2,15 +2,7 @@
 """
 Reaper — Phase 1: Scan Navidrome
 Reads an Exportify CSV, searches Navidrome via the Subsonic API,
-and produces per-playlist output files:
-  playlists/<slug>/found_tracks.json    — Navidrome song IDs for playlist creation
-  playlists/<slug>/missing_tracks.csv  — songs to download via slsk-batchdl
-
-Usage:
-  python3 01_scan.py --csv my_playlist.csv
-  python3 01_scan.py --csv my_playlist.csv --name "My Playlist"
-  python3 01_scan.py --csv my_playlist.csv --rank-col "Position"
-  python3 01_scan.py --csv my_playlist.csv --dry-run
+and produces per-playlist output files.
 """
 
 import argparse
@@ -72,12 +64,6 @@ def slugify(name: str) -> str:
     return name.strip('_')
 
 
-def playlist_slug_from_csv(csv_path: Path) -> str:
-    """Derive a slug from a CSV filename."""
-    stem = csv_path.stem
-    return slugify(stem)
-
-
 def subsonic_token(password: str, salt: str) -> str:
     return hashlib.md5((password + salt).encode()).hexdigest()
 
@@ -125,12 +111,17 @@ def fuzzy(a: str, b: str) -> float:
     return SequenceMatcher(None, a.lower().strip(), b.lower().strip()).ratio()
 
 
+def strip_feat(title: str) -> str:
+    return re.sub(
+        r'\s*(feat\.?|ft\.?|featuring)\s+.*', '', title, flags=re.IGNORECASE
+    ).strip()
+
+
 def normalise(s: str) -> str:
     """Aggressively strip noise, remastered years, live versions, and metadata bloat."""
     if not s:
         return ""
     
-    # Lowercase immediately for easier matching
     s = s.lower()
     
     # 1. Clean up parenthesis bloat
@@ -169,7 +160,6 @@ def search_navidrome(api_get, artists: list[str], title: str, threshold: float) 
         cleaned_artists.extend([a.strip() for a in artist.split(';') if a.strip()])
 
     def score_song(song: dict) -> float:
-        # Match against thoroughly scrubbed variations
         t = fuzzy(normalise(title), normalise(song.get("title", "")))
         a = max(
             fuzzy(normalise(artist), normalise(song.get("artist", "")))
@@ -178,7 +168,7 @@ def search_navidrome(api_get, artists: list[str], title: str, threshold: float) 
         return t * 0.55 + a * 0.45
 
     # Base raw search phrases (Broad strings for Subsonic's index search)
-    clean_title = strip_feat(title).split(" - ")[0].strip() # Drops everything after " - "
+    clean_title = strip_feat(title).split(" - ")[0].strip()
     title_queries = list(dict.fromkeys([clean_title, title]))
     
     # Pass 1: Title Search
@@ -187,7 +177,7 @@ def search_navidrome(api_get, artists: list[str], title: str, threshold: float) 
             continue
         resp = api_get("search3.view", {
             "query": query, 
-            "songCount": 40, # High cap to ensure we aren't truncated
+            "songCount": 40,
             "artistCount": 0, 
             "albumCount": 0,
         })
@@ -199,7 +189,7 @@ def search_navidrome(api_get, artists: list[str], title: str, threshold: float) 
     if best_score >= threshold:
         return best_match
 
-    # Pass 2: Artist Search Fallback (Querying primary artist cleanly)
+    # Pass 2: Artist Search Fallback
     for artist in cleaned_artists:
         resp = api_get("search3.view", {
             "query": artist, 
@@ -213,6 +203,57 @@ def search_navidrome(api_get, artists: list[str], title: str, threshold: float) 
                 best_score, best_match = s, song
 
     return best_match if best_score >= threshold else None
+
+
+def load_existing(found_file: Path, missing_file: Path) -> tuple[set[str], set[str]]:
+    found_uris = set()
+    missing_titles = set()
+
+    if found_file.exists():
+        with open(found_file) as f:
+            for t in json.load(f):
+                found_uris.add(t.get("uri", t.get("title", "")))
+
+    if missing_file.exists():
+        with open(missing_file, newline='', encoding='utf-8') as f:
+            for row in csv.DictReader(f):
+                missing_titles.add(row.get("title", ""))
+
+    return found_uris, missing_titles
+
+
+def read_csv(csv_path: Path, rank_col: str | None) -> list[dict]:
+    """Read Exportify CSV and return list of track dicts."""
+    tracks = []
+    with open(csv_path, newline='', encoding='utf-8-sig') as f:
+        reader = csv.DictReader(f)
+        rows = list(reader)
+
+    for i, row in enumerate(rows):
+        all_artists = [a.strip() for a in row["Artist Name(s)"].split(",")]
+
+        if rank_col:
+            try:
+                rank = int(row[rank_col])
+            except (KeyError, ValueError):
+                print(f"[WARN] Could not read rank from column '{rank_col}' on row {i+1}, using row order.")
+                rank = i + 1
+        else:
+            rank = None
+
+        tracks.append({
+            "rank":    rank,
+            "title":   row["Track Name"],
+            "artists": all_artists,
+            "artist":  all_artists[0],
+            "album":   row.get("Album Name", ""),
+            "uri":     row.get("Track URI", ""),
+        })
+
+    if rank_col:
+        tracks.sort(key=lambda x: x["rank"])
+
+    return tracks
 
 
 def main():
@@ -231,18 +272,15 @@ def main():
         print(f"❌  CSV file not found: {csv_path}")
         sys.exit(1)
 
-    # Derive playlist name and slug
     playlist_name = args.name or csv_path.stem.replace("_", " ").replace("-", " ").strip()
     slug = slugify(playlist_name)
 
-    # Set up per-playlist output directory
     playlist_dir = Path("playlists") / slug
     playlist_dir.mkdir(parents=True, exist_ok=True)
 
     found_file   = playlist_dir / "found_tracks.json"
     missing_file = playlist_dir / "missing_tracks.csv"
 
-    # Load config
     config = load_config()
     threshold = config["match_threshold"]
     api_get = make_api_get(config)
@@ -260,12 +298,10 @@ def main():
         print(f"Ranking  : none (CSV order preserved)")
     print()
 
-    # Read tracks
     print(f"Reading {csv_path}...")
     tracks = read_csv(csv_path, args.rank_col)
     print(f"Loaded {len(tracks)} tracks. Scanning Navidrome...\n")
 
-    # Load existing state for dry-run comparison
     existing_found_uris, existing_missing_titles = load_existing(found_file, missing_file)
 
     found, missing = [], []
@@ -293,7 +329,7 @@ def main():
         else:
             missing.append(track)
 
-        time.sleep(0.05)
+        time.sleep(0.01)
 
     print(f"\n\n{'─'*62}")
     print(f"  Found in collection : {len(found):>4}")
@@ -328,7 +364,6 @@ def main():
         print("\n[DRY RUN] No files written.")
         return
 
-    # Write output files
     with open(found_file, "w") as f:
         json.dump(found, f, indent=2)
     print(f"✓ {found_file}  ({len(found)} tracks)")
@@ -343,7 +378,6 @@ def main():
                 row["rank"] = t["rank"]
             writer.writerow(row)
     print(f"✓ {missing_file}  ({len(missing)} tracks to download)")
-    print(f"\nNext: ./02_download.sh --playlist {slug}")
 
 
 if __name__ == "__main__":
