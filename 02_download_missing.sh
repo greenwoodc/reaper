@@ -113,7 +113,6 @@ docker compose run --rm --no-deps sldl \
     --artist-col "artist" \
     --title-col  "title" \
     --max-retries 1 \
-    --request-timeout 30 \
     2>&1 | tee "$PLAYLIST_DIR/download_log.txt"
 
 echo ""
