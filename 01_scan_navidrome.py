@@ -32,7 +32,7 @@ DEFAULTS = {
     "navidrome_password": "",
     "navidrome_client": "reaper",
     "navidrome_version": "1.16.1",
-    "match_threshold": 0.85,
+    "match_threshold": 0.80,
 }
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -143,16 +143,27 @@ def score_song(song: dict, clean_t: str, cleaned_artists: list[str], primary_art
     norm_s_artist = normalise(s_artist)
 
     t_score = fuzzy(clean_t, norm_s_title)
-    a_score = max(fuzzy(normalise(artist), norm_s_artist) for artist in cleaned_artists)
+    
+    # Extract structural normalized copies for multi-era alias protection
+    norm_primary = normalise(primary_artist)
+    
+    # Hardcoded Artist Alias Resolution Pass
+    is_csv_shihad = norm_primary in ["shihad", "pacifier"]
+    is_db_shihad = norm_s_artist in ["shihad", "pacifier", "shihad pacifier", "shihadpacifier"]
+
+    if is_csv_shihad and is_db_shihad:
+        a_score = 1.0
+    else:
+        a_score = max(fuzzy(normalise(artist), norm_s_artist) for artist in cleaned_artists)
 
     # Compilation Hack
-    if norm_s_artist == "various artists" and normalise(primary_artist) in norm_s_title:
+    if norm_s_artist == "various artists" and norm_primary in norm_s_title:
         a_score = 1.0
         if " - " in norm_s_title:
             title_part = normalise(s_title.split(" - ")[0])
             t_score = max(t_score, fuzzy(clean_t, title_part))
 
-    # Title Anchor Boost (Preserves matches for tracks like Shihad/Pacifier)
+    # Title Anchor Boost
     if norm_s_title == clean_t and a_score >= 0.70:
         a_score = max(a_score, 0.90)
 
@@ -172,13 +183,16 @@ def search_navidrome(api_get, artists: list[str], title: str, threshold: float) 
     
     is_stubborn = clean_t in ["orange crush", "stand", "tribute", "home again", "all along the watchtower"]
 
-    # Search queries execution priority layout
-    queries = [
-        f"{primary_artist} {clean_t}",          
-        f"{primary_artist_no_punct} {clean_t}", 
-        title,                                  
-        clean_t,                                
-    ]
+    # If parsing Shihad, automatically stack query variations for the API
+    if normalise(primary_artist) in ["shihad", "pacifier"]:
+        queries = ["Shihad " + clean_t, "Pacifier " + clean_t, clean_t]
+    else:
+        queries = [
+            f"{primary_artist} {clean_t}",          
+            f"{primary_artist_no_punct} {clean_t}", 
+            title,                                  
+            clean_t,                                
+        ]
 
     if is_stubborn:
         print(f"\n\n🔍 [LIVE DEBUG] Troubleshooting match for: {primary_artist} — {title}")
@@ -202,7 +216,7 @@ def search_navidrome(api_get, artists: list[str], title: str, threshold: float) 
             s = score_song(song, clean_t, cleaned_artists, primary_artist)
             if is_stubborn:
                 print(f"     ↳ Match Found: '{song.get('artist')} — {song.get('title')}' [Score: {s:.2f}]")
-            if s >= best_score:  # Inclusive comparison catches exact boundary ties cleanly
+            if s >= best_score:  
                 best_score, best_match = s, song
 
     if best_score >= threshold:
@@ -210,14 +224,18 @@ def search_navidrome(api_get, artists: list[str], title: str, threshold: float) 
             print(f"  ✅ SUCCESS: Matched with score {best_score:.2f}\n")
         return best_match
 
-    # Deep Fallback Pass — Force a complete catalog extraction to bypass keyword index truncation limits
+    # Deep Fallback Pass
     if is_stubborn:
         print(f"  ⚠️  Low scores. Attempting high-volume fallback search for full artist catalog.")
 
-    for fallback_query in list(dict.fromkeys([primary_artist, primary_artist_no_punct])):
+    fallback_targets = [primary_artist, primary_artist_no_punct]
+    if normalise(primary_artist) in ["shihad", "pacifier"]:
+        fallback_targets.extend(["Shihad", "Pacifier"])
+
+    for fallback_query in list(dict.fromkeys(fallback_targets)):
         resp = api_get("search3.view", {
             "query": fallback_query, 
-            "songCount": 600, # Large volume payload configuration
+            "songCount": 600, 
             "artistCount": 0,
             "albumCount": 0
         })
