@@ -18,6 +18,7 @@ import time
 import unicodedata
 from difflib import SequenceMatcher
 from pathlib import Path
+from typing import Optional
 from urllib import request, parse
 from urllib.error import URLError
 
@@ -101,6 +102,16 @@ def make_api_get(config: dict):
     return api_get
 
 
+def check_connection(api_get):
+    """Verify Navidrome is reachable and credentials are valid before proceeding."""
+    resp = api_get("ping.view", {})
+    status = resp.get("subsonic-response", {}).get("status")
+    if status != "ok":
+        print("❌  Cannot reach Navidrome — check config.yml URL and credentials.")
+        sys.exit(1)
+    print("✓ Navidrome connection verified.")
+
+
 def fuzzy(a: str, b: str) -> float:
     return SequenceMatcher(None, a.lower().strip(), b.lower().strip()).ratio()
 
@@ -110,9 +121,9 @@ def normalise(s: str) -> str:
     if not s:
         return ""
     s = s.lower()
-    
+
     s = re.sub(r'\(.*?(remaster|remastered|deluxe|edition|version|mix|mono|stereo|live|feat|bonus|original|studio|20\d{2}|19\d{2}).*?\)', '', s)
-    
+
     if " - " in s:
         parts = s.split(" - ")
         if any(word in parts[-1] for word in ["remaster", "live", "acoustic", "version", "edit", "mix", "original", "20", "19"]):
@@ -121,7 +132,7 @@ def normalise(s: str) -> str:
     s = s.replace("'", "")
     s = re.sub(r'[^\w\s-]', ' ', s)
     s = re.sub(r'\s+', ' ', s)
-    
+
     s = ''.join(
         c for c in unicodedata.normalize('NFD', s)
         if unicodedata.category(c) != 'Mn'
@@ -129,17 +140,17 @@ def normalise(s: str) -> str:
     return s.strip()
 
 
-def score_song(song: dict, clean_t: str, cleaned_artists: list[str], primary_artist: str) -> float:
+def score_song(song: dict, clean_t: str, cleaned_artists: list, primary_artist: str) -> float:
     """Unified engine matching Phase 1 calculations precisely."""
     s_title = song.get("title", "")
     s_artist = song.get("artist", "")
-    
+
     norm_s_title = normalise(s_title)
     norm_s_artist = normalise(s_artist)
 
     t_score = fuzzy(clean_t, norm_s_title)
     norm_primary = normalise(primary_artist)
-    
+
     is_csv_shihad = norm_primary in ["shihad", "pacifier"]
     is_db_shihad = norm_s_artist in ["shihad", "pacifier", "shihad pacifier", "shihadpacifier"]
 
@@ -184,7 +195,7 @@ def wait_for_scan(api_get):
         print(".", end="", flush=True)
 
 
-def search_navidrome(api_get, artists: list[str], title: str, threshold: float) -> dict | None:
+def search_navidrome(api_get, artists: list, title: str, threshold: float) -> Optional[dict]:
     best_score, best_match = 0.0, None
 
     cleaned_artists = []
@@ -194,66 +205,70 @@ def search_navidrome(api_get, artists: list[str], title: str, threshold: float) 
     primary_artist = cleaned_artists[0]
     primary_artist_no_punct = re.sub(r'[^\w\s]', '', primary_artist)
     clean_t = normalise(title)
-    
+
     if normalise(primary_artist) in ["shihad", "pacifier"]:
         queries = ["Shihad " + clean_t, "Pacifier " + clean_t, clean_t]
     else:
         queries = [
-            f"{primary_artist} {clean_t}",          
-            f"{primary_artist_no_punct} {clean_t}", 
-            title,                                  
-            clean_t,                                
+            f"{primary_artist} {clean_t}",
+            f"{primary_artist_no_punct} {clean_t}",
+            title,
+            clean_t,
         ]
 
     for query in list(dict.fromkeys(queries)):
-        if not query or len(query.strip()) < 2: 
+        if not query or len(query.strip()) < 2:
             continue
 
         resp = api_get("search3.view", {
-            "query": query.strip(), 
+            "query": query.strip(),
             "songCount": 120,
             "artistCount": 0,
             "albumCount": 0
         })
-        
+
         songs = resp.get("subsonic-response", {}).get("searchResult3", {}).get("song", [])
         for song in songs:
             s = score_song(song, clean_t, cleaned_artists, primary_artist)
-            if s >= best_score:  
+            if s > best_score:  # first match wins on ties
                 best_score, best_match = s, song
 
     if best_score >= threshold:
         return best_match
 
-    # Deep Fallback Pass
+    # Deep Fallback Pass — search by artist only, score all results
     fallback_targets = [primary_artist, primary_artist_no_punct]
     if normalise(primary_artist) in ["shihad", "pacifier"]:
         fallback_targets.extend(["Shihad", "Pacifier"])
 
+    fallback_best_score, fallback_best_match = 0.0, None
+
     for fallback_query in list(dict.fromkeys(fallback_targets)):
         resp = api_get("search3.view", {
-            "query": fallback_query, 
-            "songCount": 600, 
+            "query": fallback_query,
+            "songCount": 600,
             "artistCount": 0,
             "albumCount": 0
         })
         for song in resp.get("subsonic-response", {}).get("searchResult3", {}).get("song", []):
             s = score_song(song, clean_t, cleaned_artists, primary_artist)
-            if s >= best_score:
-                best_score, best_match = s, song
+            if s > fallback_best_score:  # first match wins on ties
+                fallback_best_score, fallback_best_match = s, song
 
-    return best_match if best_score >= threshold else None
+    if fallback_best_score >= threshold:
+        return fallback_best_match
+
+    return None
 
 
 def main():
     parser = argparse.ArgumentParser(description="Reaper Phase 3 — Rescan and Merge Newly Found Tracks")
-    parser.get_default("--playlist")
     parser.add_argument("--playlist", required=True, help="Playlist folder name within playlists/")
     args = parser.parse_args()
 
     slug = slugify(args.playlist)
     playlist_dir = Path("playlists") / slug
-    
+
     found_file = playlist_dir / "found_tracks.json"
     missing_file = playlist_dir / "missing_tracks.csv"
 
@@ -269,24 +284,26 @@ def main():
     threshold = config["match_threshold"]
     api_get = make_api_get(config)
 
+    # Validate connection before doing anything
+    check_connection(api_get)
+
     with open(found_file) as f:
         found = json.load(f)
 
     missing = []
     has_rank_column = False
-    
+
     with open(missing_file, newline='', encoding='utf-8') as f:
         reader = csv.DictReader(f)
         fieldnames = reader.fieldnames or []
         has_rank_column = "rank" in fieldnames
-        
+
         for i, row in enumerate(reader):
             artist_str = row.get("artist", "")
             artists = [a.strip() for a in artist_str.split(";") if a.strip()]
             if not artists:
                 artists = [a.strip() for a in artist_str.split(",") if a.strip()]
 
-            # Handle parsing flexible ranking safely
             rank_val = None
             if has_rank_column and row.get("rank"):
                 try:
@@ -343,7 +360,7 @@ def main():
     print(f"  Still missing             : {len(still_missing):>4}")
     print(f"{'─'*62}\n")
 
-    # Merge records
+    # Merge and sort
     all_found = found + newly_found
     if has_rank_column:
         all_found = sorted(all_found, key=lambda x: x.get("rank", 9999))
@@ -352,7 +369,7 @@ def main():
         json.dump(all_found, f, indent=2)
     print(f"✓ {found_file} updated ({len(all_found)} total tracks tracked)")
 
-    # Output what is still missing back to the CSV folder
+    # Write remaining missing back to CSV
     output_fields = ["artist", "title", "album"]
     if has_rank_column:
         output_fields.insert(0, "rank")
@@ -365,7 +382,7 @@ def main():
             if has_rank_column:
                 row["rank"] = t["rank"]
             writer.writerow(row)
-            
+
     print(f"✓ {missing_file} updated ({len(still_missing)} remaining items)")
 
 
