@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Clean up search phrases in missing_tracks.csv for better Soulseek hits.
-Leverages the robust normalization logic built for Phase 1 with added
-protection against trailing parenthetical collaborations.
+Leverages Phase 1 normalization with strict word-boundary token matching.
+No hardcoded track or artist exemptions.
 """
 
 import argparse
@@ -34,32 +34,33 @@ def clean_artist(artist: str) -> str:
     if not artist:
         return ""
     
-    # Handle multi-artist splits early
-    for sep in [';', ',', ' and ', ' &', ' feat.', ' feat']:
-        if sep in artist.lower():
-            # Split and keep the primary artist
-            artist = re.split(sep, artist, flags=re.IGNORECASE)[0].strip()
+    # Handle multi-artist splits early using strict boundaries or explicit delimiters
+    for sep in [';', ',', r'\band\b', r'\b&\b', r'\bfeat\.?\b', r'\bfeaturing\b']:
+        # Split on the separator if it matches as a standalone token/character
+        parts = re.split(sep, artist, flags=re.IGNORECASE)
+        if len(parts) > 1:
+            artist = parts[0].strip()
 
-    # Drop trailing/inner feature parentheses left behind
+    # Drop any trailing/inner feature parentheses left behind
     artist = re.sub(r'\s*\(feat\..*?\)', '', artist, flags=re.IGNORECASE)
     artist = re.sub(r'\s*\bfeaturing\b.*', '', artist, flags=re.IGNORECASE)
     
-    # Shihad / Pacifier Multi-era Soulseek search enhancement
-    if artist.lower() in ["shihad", "pacifier", "shihad/pacifier"]:
-        return "Shihad Pacifier"
+    # Handle composite dual-identities safely using clean spacing
+    artist = artist.replace('/', ' ')
 
     return artist.strip()
 
 
 def clean_title(title: str) -> str:
-    """Apply the refined Phase 1 right-split logic to strip metadata and collab bloat safely."""
+    """Apply refined right-split logic with strict word boundaries for metadata and collabs."""
     if not title:
         return ""
 
-    # 1. Strip structural parenthesis blocks matching metadata keywords OR collaboration cues
-    # Added: 'with', 'and', 'duet', 'featuring', 'feat', 'vs', 'presents', 'pres'
+    # 1. Strip structural metadata blocks safely.
+    # We use \b (word boundaries) around short words so 'and' matches '(And I Feel Fine)' 
+    # but completely ignores 'Stand' inside '(Stand by Me)'.
     title = re.sub(
-        r'\(.*?(remaster|remastered|deluxe|edition|version|mix|mono|stereo|live|feat|featuring|bonus|original|studio|20\d{2}|19\d{2}|with|and|duet|vs|presents|pres).*?\)',
+        r'\(.*?(remaster|remastered|deluxe|edition|version|mix|mono|stereo|live|feat|featuring|bonus|original|studio|20\d{2}|19\d{2}|\bwith\b|\band\b|\bduet\b|\bvs\b|\bpresents\b|\bpres\b).*?\)',
         '', title, flags=re.IGNORECASE
     )
 
@@ -69,7 +70,7 @@ def clean_title(title: str) -> str:
         if any(word in parts[-1].lower() for word in ["remaster", "live", "acoustic", "version", "edit", "mix", "original", "20", "19"]):
             title = " - ".join(parts[:-1])
 
-    # 3. Clean up empty brackets and trailing noise (But preserve internal hyphens/apostrophes)
+    # 3. Clean up empty brackets and trailing noise (Preserving valid internal punctuation)
     title = re.sub(r'\s*\(\s*\)', '', title)
     title = re.sub(r'\s*\[\s*\]', '', title)
     title = re.sub(r'\s+', ' ', title)
@@ -83,21 +84,18 @@ def main():
     parser.add_argument("--playlist", help="Name of playlist folder inside playlists/ to target automatically")
     args = parser.parse_args()
 
-    # Determine input file path location
     if args.csv:
         csv_path = Path(args.csv)
     elif args.playlist:
         slug = slugify(args.playlist)
         csv_path = Path("playlists") / slug / "missing_tracks.csv"
     else:
-        # Fallback default lookup to match your previous setup
         csv_path = Path("playlists/hauraki_top_25/missing_tracks.csv")
         if not csv_path.exists():
             csv_path = Path("config/missing_tracks.csv")
 
     if not csv_path.exists():
         print(f"❌ Error: Target CSV not found at '{csv_path}'")
-        print("Please specify path explicitly via: --csv path/to/file.csv or --playlist 'Playlist Name'")
         sys.exit(1)
 
     output_path = csv_path.with_name("missing_tracks_cleaned.tmp")
@@ -118,25 +116,20 @@ def main():
         orig_artist = track.get('artist', '')
         orig_title = track.get('title', '')
 
-        # Process strings using the synchronized logic
         artist_clean = clean_artist(orig_artist)
         title_clean = clean_title(orig_title)
 
-        # Normalize diacritics / special characters
         artist_clean = simplify_text(artist_clean)
         title_clean = simplify_text(title_clean)
 
-        # Preserve the incoming metadata structure cleanly
         cleaned_row = track.copy()
         cleaned_row['artist'] = artist_clean
         cleaned_row['title'] = title_clean
         
-        # Store metadata references to render debugging transformations nicely
         cleaned_row['_orig_artist'] = orig_artist
         cleaned_row['_orig_title'] = orig_title
         cleaned.append(cleaned_row)
 
-    # Re-verify and compile required fields for writing out
     output_fields = [f for f in fieldnames if f in sorted(cleaned[0].keys())] if fieldnames else ['rank', 'artist', 'title', 'album']
     
     with open(output_path, 'w', newline='', encoding='utf-8') as f:
@@ -145,11 +138,9 @@ def main():
         for track in cleaned:
             writer.writerow(track)
 
-    # Overwrite the original target file atomically
     shutil.move(str(output_path), str(csv_path))
     print(f"✓ Replaced file with Soulseek-optimized version: {csv_path}\n")
 
-    # Display transformation comparisons
     print("Sample Modifications Visualizer (Max 10):")
     print(f"{'─'*100}")
     count = 0
