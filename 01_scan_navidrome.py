@@ -134,18 +134,17 @@ def normalise(s: str) -> str:
     return s.strip()
 
 
-def score_song(song: dict, clean_t: str, cleaned_artists: list[str], primary_artist: str) -> float:
-    """Unified engine to calculate precise cross-field similarity weightings."""
+def score_song(song: dict, clean_t: str, cleaned_artists: list, primary_artist: str) -> float:
+    """Unified engine matching Phase 1 calculations precisely."""
     s_title = song.get("title", "")
     s_artist = song.get("artist", "")
-    
+
     norm_s_title = normalise(s_title)
     norm_s_artist = normalise(s_artist)
 
     t_score = fuzzy(clean_t, norm_s_title)
     norm_primary = normalise(primary_artist)
-    
-    # Hardcoded Artist Alias Resolution Pass
+
     is_csv_shihad = norm_primary in ["shihad", "pacifier"]
     is_db_shihad = norm_s_artist in ["shihad", "pacifier", "shihad pacifier", "shihadpacifier"]
 
@@ -154,14 +153,17 @@ def score_song(song: dict, clean_t: str, cleaned_artists: list[str], primary_art
     else:
         a_score = max(fuzzy(normalise(artist), norm_s_artist) for artist in cleaned_artists)
 
-    # Compilation Hack
+    # Boost if primary artist is contained within a featured-artist tag
+    # e.g. "Rihanna" contained in "Rihanna feat. Calvin Harris"
+    if norm_primary in norm_s_artist and len(norm_primary) > 3:
+        a_score = max(a_score, 0.90)
+
     if norm_s_artist == "various artists" and norm_primary in norm_s_title:
         a_score = 1.0
         if " - " in norm_s_title:
             title_part = normalise(s_title.split(" - ")[0])
             t_score = max(t_score, fuzzy(clean_t, title_part))
 
-    # Title Anchor Boost
     if norm_s_title == clean_t and a_score >= 0.70:
         a_score = max(a_score, 0.90)
 

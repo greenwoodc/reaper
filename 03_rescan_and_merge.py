@@ -159,6 +159,11 @@ def score_song(song: dict, clean_t: str, cleaned_artists: list, primary_artist: 
     else:
         a_score = max(fuzzy(normalise(artist), norm_s_artist) for artist in cleaned_artists)
 
+    # Boost if primary artist is contained within a featured-artist tag
+    # e.g. "Rihanna" contained in "Rihanna feat. Calvin Harris"
+    if norm_primary in norm_s_artist and len(norm_primary) > 3:
+        a_score = max(a_score, 0.90)
+
     if norm_s_artist == "various artists" and norm_primary in norm_s_title:
         a_score = 1.0
         if " - " in norm_s_title:
