@@ -17,6 +17,7 @@ echo "► Running beets import on: $INCOMING_DIR"
 echo "  (duplicates will be skipped and cleaned up automatically)"
 echo ""
 
+rm -f ~/.config/beets/state.pickle
 beet import -q --singletons "$INCOMING_DIR"
 
 echo ""
