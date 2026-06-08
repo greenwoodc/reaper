@@ -14,7 +14,7 @@ services:
       - /mnt/4TBExt/Media:/data
     # Expose Soulseek listening port for incoming peer connections (downloads)
     ports:
-      - "49998:49998/tcp"
-      - "49998:49998/udp"
+      - "54880-54881:54880-54881/tcp"
+      - "54880-54881:54880-54881/udp"
     # Exit immediately after download completes to avoid persistent login
     restart: "no"
