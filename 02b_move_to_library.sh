@@ -17,7 +17,7 @@ echo "► Running beets import on: $INCOMING_DIR"
 echo "  (duplicates will be skipped and cleaned up automatically)"
 echo ""
 
-beet import -q "$INCOMING_DIR"
+beet import -q --singletons "$INCOMING_DIR"
 
 echo ""
 echo "► Cleaning up empty directories in incoming..."
