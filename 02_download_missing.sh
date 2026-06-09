@@ -50,6 +50,11 @@ else
 fi
 
 # ── STEP 2: Check prerequisites ──────────────────────────────────────────────
+if ! command -v python3 &>/dev/null; then
+    echo "❌  python3 not found in PATH. Required for Phase 1b cleanup."
+    exit 1
+fi
+
 if [ ! -f "$SCRIPT_DIR/config/sldl.conf" ]; then
     echo "❌  config/sldl.conf not found."
     exit 1
@@ -70,7 +75,7 @@ if [ ! -f "$CSV_PATH" ]; then
     exit 1
 fi
 
-TRACK_COUNT=$(tail -n +2 "$CSV_PATH" | wc -l | tr -d ' ')
+TRACK_COUNT=$(tail -n +2 "$CSV_PATH" | wc -l)
 if [ "$TRACK_COUNT" -eq 0 ]; then
     echo "🎉 Zero missing tracks found! Your library is fully up to date for this playlist."
     exit 0
@@ -94,8 +99,17 @@ MUSIC_UID=$(stat -c '%u' /mnt/4TBExt/Media/Music)
 MUSIC_GID=$(stat -c '%g' /mnt/4TBExt/Media/Music)
 
 if [ "$MUSIC_UID" != "1000" ] || [ "$MUSIC_GID" != "1000" ]; then
-    echo "⚠  Music folder owned by UID=$MUSIC_UID GID=$MUSIC_GID"
-    echo "   Ensure PUID/PGID matches in docker-compose.yml before running if files fail to write."
+    echo ""
+    echo "⚠️  WARNING: Music folder owned by UID=$MUSIC_UID GID=$MUSIC_GID (expected 1000:1000)."
+    echo "   Downloaded files may be unreadable by beets in Phase 2b."
+    echo "   Update 'user:' in docker-compose.yml to match, or fix with:"
+    echo "     sudo chown -R \$(id -u):\$(id -g) /mnt/4TBExt/Media/incoming/"
+    echo ""
+    read -r -p "   Continue anyway? [y/N] " _confirm
+    if [[ ! "$_confirm" =~ ^[Yy]$ ]]; then
+        echo "Aborted."
+        exit 1
+    fi
 fi
 
 # ── STEP 5: Run sldl inside the container ────────────────────────────────────
@@ -125,14 +139,14 @@ if [ -f "$CONTAINER_CSV_STAGING" ]; then
     rm "$CONTAINER_CSV_STAGING"
 fi
 
-# If slsk-batchdl drops an un-downloadable list file, catch it and put it in the playlist directory
-if [ -f "$SCRIPT_DIR/config/not_found.txt" ] && [ -s "$SCRIPT_DIR/config/not_found.txt" ]; then
+# If slsk-batchdl drops a not_found list into config/, move it to the playlist directory
+if [ -f "$SCRIPT_DIR/config/not_found.txt" ]; then
     mv "$SCRIPT_DIR/config/not_found.txt" "$PLAYLIST_DIR/not_found.txt"
 fi
 
 if [ -f "$PLAYLIST_DIR/not_found.txt" ] && [ -s "$PLAYLIST_DIR/not_found.txt" ]; then
-    NOT_FOUND=$(wc -l < "$PLAYLIST_DIR/not_found.txt" | tr -d ' ')
-    echo "  ⚠  $NOT_FOUND tracks not found on Soulseek — see playlists/$SLUG/not_found.txt"
+    NOT_FOUND=$(wc -l < "$PLAYLIST_DIR/not_found.txt")
+    echo "  ⚠  $NOT_FOUND track(s) not found on Soulseek — see playlists/$SLUG/not_found.txt"
 fi
 
 # ── STEP 6: Container Safety Exit Cleanup ────────────────────────────────────
@@ -140,7 +154,7 @@ echo ""
 echo "► Cleaning up Docker container..."
 docker compose down
 
-if docker container inspect sldl >/dev/null 2>&1 2>/dev/null; then
+if docker container inspect sldl >/dev/null 2>&1; then
     echo "⚠️  WARNING: Container still running! Forcing cleanup..."
     docker compose kill sldl
 fi
@@ -151,4 +165,5 @@ sleep 30
 
 echo ""
 echo "Safe to log into Soulseek now."
-echo "Next: python3 03_rescan_and_merge.py --playlist \"$PLAYLIST\""
+echo "Next: ./02b_move_to_library.sh"
+echo "Then: python3 03_rescan_and_merge.py --playlist \"$PLAYLIST\""
