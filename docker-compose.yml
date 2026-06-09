@@ -1,20 +1,15 @@
 services:
   sldl:
-    image: slsk-batchdl          # built locally from the cloned repo
+    image: slsk-batchdl
     container_name: sldl
-    # Match these to the user who owns /mnt/4TBExt/Media/Music
-    # Run: id -u && id -g  to get your values
+    user: "1000:1000"
     environment:
       - PUID=1000
       - PGID=1000
     volumes:
-      # Config dir: holds sldl.conf, missing_tracks.csv, not_found.txt
       - ./config:/config
-      # Data dir: maps directly into your existing music library
       - /mnt/4TBExt/Media:/data
-    # Expose Soulseek listening port for incoming peer connections (downloads)
     ports:
       - "54880-54881:54880-54881/tcp"
       - "54880-54881:54880-54881/udp"
-    # Exit immediately after download completes to avoid persistent login
     restart: "no"
