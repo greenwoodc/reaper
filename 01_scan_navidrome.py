@@ -406,6 +406,13 @@ def main():
             writer.writerow(row)
     print(f"✓ {missing_file}  ({len(missing)} tracks to download)")
 
+    if missing:
+        print(f"\nNext steps:")
+        print(f"  ./02_download_missing.sh --playlist \"{playlist_name}\"")
+    else:
+        print(f"\nAll tracks found — skip to Phase 4:")
+        print(f"  python3 04_create_playlist.py --playlist \"{playlist_name}\"")
+
 
 if __name__ == "__main__":
     main()

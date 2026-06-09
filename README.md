@@ -146,6 +146,12 @@ chmod +x 02_download_missing.sh 02b_move_to_library.sh
         │  → found_tracks.json
         │  → playlists/<slug>/missing_tracks.csv
         ▼
+01b_cleanup_missing_csv.py
+        │  Normalises artist/title strings for Soulseek compatibility
+        │  Strips features, metadata parentheticals, diacritics, bad punctuation
+        │  → missing_tracks.csv (overwritten in-place)
+        │  (auto-invoked by Phase 2; can also be run standalone)
+        ▼
 02_download_missing.sh
         │  Cleans CSV (01b), downloads via Soulseek (sldl Docker)
         │  → /mnt/4TBExt/Media/incoming/
@@ -185,13 +191,47 @@ Playlist : Hauraki Top 25
 ──────────────────────────────────────────────────────────────
 ```
 
+### Phase 1b — Clean missing CSV (optional manual run)
+
+```bash
+python3 01b_cleanup_missing_csv.py --playlist "Hauraki Top 25"
+```
+
+Normalises `missing_tracks.csv` in-place so Soulseek gets cleaner search strings. Phase 2 runs this automatically, but you can run it manually to preview the changes before downloading.
+
+**What it does — three passes per track:**
+
+1. **Structural extraction** — strips featured artists, backing band noise (`& The ...`), and metadata parentheticals from titles (remaster, deluxe, edition, live, year suffixes, feat. clauses). Uses word-boundary matching to avoid clipping legitimate parts of a title.
+2. **Unicode normalisation** — removes diacritics and accent marks (e.g. `é` → `e`) that P2P clients often struggle to match.
+3. **Punctuation stripping** — removes ellipses, brackets, quotes, hyphens, and other characters that break Soulseek search queries.
+
+The script prints a sample diff of every row that changed (up to 10):
+
+```
+Track [Rank 3]:
+  Artist: 'AC DC Tribute Band'              →  'AC DC Tribute Band'
+  Title:  'Don't Dream It's Over (Remastered 2016)'  →  'Don t Dream It s Over'
+```
+
+> **Note:** The original values are preserved internally during the run for display only — the CSV is overwritten with cleaned values. If you need to restore originals, re-run Phase 1.
+
+**Accepted arguments:**
+
+| Argument | Description |
+|---|---|
+| `--playlist "Name"` | Targets `playlists/<slug>/missing_tracks.csv` automatically |
+| `--csv path/to/file.csv` | Targets an arbitrary CSV path directly |
+| *(none)* | Falls back to `playlists/hauraki_top_25/missing_tracks.csv` |
+
+---
+
 ### Phase 2 — Download missing tracks
 
 ```bash
 ./02_download_missing.sh --playlist "Hauraki Top 25"
 ```
 
-Automatically runs Phase 1b cleanup on the CSV, then downloads missing tracks via Soulseek. Downloads land in `/mnt/4TBExt/Media/incoming/`.
+Automatically runs Phase 1b (`01b_cleanup_missing_csv.py`) to clean the CSV before searching, then downloads missing tracks via Soulseek. Downloads land in `/mnt/4TBExt/Media/incoming/`.
 
 > **Do not** log into Soulseek locally while this script is running. The container holds the session exclusively. Wait for the script to finish and the 30-second cooldown to complete before logging in.
 
@@ -262,11 +302,7 @@ rm -f ~/.config/beets/state.pickle
 Check that Navidrome's music folder path covers `/mnt/4TBExt/Media/Music`. Phase 3 triggers a rescan automatically — if tracks still don't appear, trigger a manual scan in Navidrome → Settings → Library → Scan now.
 
 **Bad artist tags in source CSV**
-Phase 1b cleans common issues automatically, but some require manual correction. Known examples:
-- `AC DC Tribute Band` → `AC/DC`
-- `BushidoSensei` → `Bush`
-
-Edit the CSV directly before running Phase 2.
+Phase 1b automatically handles most common issues: featured artist suffixes, `& The ...` backing band noise, collab separators (`;`, `,`, `feat.`, `with`), and unicode/punctuation hazards. For values that survive cleaning unchanged — typically where the source CSV itself has a genuinely wrong artist name — manual correction is still needed before running Phase 2. Edit `missing_tracks.csv` directly, or fix the source CSV and re-run Phase 1.
 
 **Tracks not found on Soulseek**
 Check `playlists/<slug>/not_found.txt` after a run. Options for manual sourcing:
