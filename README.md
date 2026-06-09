@@ -110,10 +110,14 @@ import:
     incremental: yes
     clean: yes
 
-plugins: fetchart duplicates chroma
+plugins: fetchart duplicates
+#plugins: fetchart duplicates chroma
+#chroma disabled to improve matching during import
 
-acoustid:
-    apikey: your_acoustid_key
+#acoustid:
+#    apikey: your_acoustid_key
+#not needed when not using chroma
+
 
 match:
     strong_rec_thresh: 0.80
