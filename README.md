@@ -191,7 +191,7 @@ Playlist : Hauraki Top 25
 ──────────────────────────────────────────────────────────────
 ```
 
-### Phase 1b — Clean missing CSV (optional manual run)
+### Phase 1b — Clean missing CSV (optional manual run runs automatically with phase 2 so not normally necessary)
 
 ```bash
 python3 01b_cleanup_missing_csv.py --playlist "Hauraki Top 25"
