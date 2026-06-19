@@ -1,5 +1,8 @@
 services:
   sldl:
+    build:
+      context: .
+      dockerfile: Dockerfile
     image: slsk-batchdl
     container_name: sldl
     user: "1000:1000"

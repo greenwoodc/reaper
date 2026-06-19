@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Reaper — Phase 2: Download missing tracks via slsk-batchdl (Docker)
+# Reaper — Phase 2: Download missing tracks via sockseek (Docker)
 #
 # Usage:
 #   ./02_download_missing.sh --playlist "Hauraki Top 25"
@@ -40,14 +40,11 @@ SLUG=$(slugify "$PLAYLIST")
 PLAYLIST_DIR="$SCRIPT_DIR/playlists/$SLUG"
 CSV_PATH="$PLAYLIST_DIR/missing_tracks.csv"
 
-# ── STEP 1: Build from custom Dockerfile with .NET 10 (master branch) ──
-if ! docker image inspect slsk-batchdl &>/dev/null; then
-    echo "► Building slsk-batchdl from master (with excluded phrase filter fix)..."
-    docker build -t slsk-batchdl .
-    echo "✓ Image built."
-else
-    echo "✓ slsk-batchdl image already exists."
-fi
+# ── STEP 1: Build image via docker compose (idempotent, cache-aware) ─────────
+echo "► Ensuring slsk-batchdl image is current..."
+cd "$SCRIPT_DIR"
+docker compose build --quiet
+echo "✓ Image ready."
 
 # ── STEP 2: Check prerequisites ──────────────────────────────────────────────
 if ! command -v python3 &>/dev/null; then
@@ -112,9 +109,9 @@ if [ "$MUSIC_UID" != "1000" ] || [ "$MUSIC_GID" != "1000" ]; then
     fi
 fi
 
-# ── STEP 5: Run sldl inside the container ────────────────────────────────────
+# ── STEP 5: Run sockseek inside the container ─────────────────────────────────
 echo ""
-echo "► Running sldl (output will stream below)..."
+echo "► Running sockseek (output will stream below)..."
 echo "  Press Ctrl+C to pause — re-running this script will resume safely."
 echo "──────────────────────────────────────────────────────────────"
 
@@ -139,7 +136,7 @@ if [ -f "$CONTAINER_CSV_STAGING" ]; then
     rm "$CONTAINER_CSV_STAGING"
 fi
 
-# If slsk-batchdl drops a not_found list into config/, move it to the playlist directory
+# If sockseek drops a not_found list into config/, move it to the playlist directory
 if [ -f "$SCRIPT_DIR/config/not_found.txt" ]; then
     mv "$SCRIPT_DIR/config/not_found.txt" "$PLAYLIST_DIR/not_found.txt"
 fi
