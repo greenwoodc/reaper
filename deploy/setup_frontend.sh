@@ -44,10 +44,15 @@ export NVM_DIR="$HOME/.nvm"
 # shellcheck source=/dev/null
 source "$NVM_DIR/nvm.sh"
 
-echo "== Installing Node 20 LTS (Next.js 16 requires >=20.9.0) =="
-nvm install 20
-nvm use 20
-nvm alias default 20
+# Pinned to an exact patch (not just "20") so re-running this script later
+# can't silently pick up a different Node build than the one this was tested
+# against. Bump deliberately if you need a newer patch.
+NODE_VERSION="20.20.2"
+
+echo "== Installing Node $NODE_VERSION (Next.js 16 requires >=20.9.0) =="
+nvm install "$NODE_VERSION"
+nvm use "$NODE_VERSION"
+nvm alias default "$NODE_VERSION"
 node -v
 npm -v
 

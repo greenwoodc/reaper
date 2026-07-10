@@ -2,6 +2,8 @@
 
 Scans your Navidrome library, downloads missing tracks via Soulseek, imports them with beets, and creates or updates playlists — fully automated and playlist-agnostic. Driven by a Next.js + Flask webapp; no CLI required.
 
+Designed to be run on the same server/machine as your navidrome server, files are downloaded to a temporary "incoming" directory, then moved to your main music media directory.
+
 ---
 
 ## Directory layout
