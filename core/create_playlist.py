@@ -64,6 +64,17 @@ def create_new_playlist(api_get, name: str, first_song_id: str) -> str:
     return pl_id
 
 
+def set_playlist_public(api_raw, base_url: str, auth_str: str, playlist_id: str, quiet: bool = False) -> None:
+    """Make the playlist visible to all Navidrome users, not just the owner.
+    Subsonic's updatePlaylist supports `public` directly — Navidrome defaults
+    new playlists to private otherwise, requiring a manual toggle per playlist."""
+    url = f"{base_url}/rest/updatePlaylist.view?{auth_str}&playlistId={playlist_id}&public=true"
+    if api_raw(url) is None:
+        raise RuntimeError("Failed to mark playlist public")
+    if not quiet:
+        print("  Marked playlist public.")
+
+
 def clear_playlist(api_get, api_raw, base_url: str, auth_str: str, playlist_id: str, quiet: bool = False):
     """Remove all songs from an existing playlist."""
     resp = api_get("getPlaylist.view", {"id": playlist_id})
@@ -170,6 +181,8 @@ def create_or_update_playlist(
             print(f"  Playlist created (ID: {playlist_id})")
         clear_playlist(api_get, api_raw, base_url, auth_str, playlist_id, quiet=quiet)
         add_songs_in_batches(api_raw, base_url, auth_str, playlist_id, song_ids, quiet=quiet, on_progress=on_progress)
+
+    set_playlist_public(api_raw, base_url, auth_str, playlist_id, quiet=quiet)
 
     found_ranks = {t.get("rank") for t in found if t.get("rank") is not None}
     max_rank = max(found_ranks) if found_ranks else len(found)
