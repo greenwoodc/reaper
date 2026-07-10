@@ -1,0 +1,15 @@
+[Unit]
+Description=Reaper frontend (Next.js)
+After=network.target
+
+[Service]
+Type=simple
+User=chris
+WorkingDirectory=/opt/reaper/frontend
+Environment=NODE_ENV=production
+ExecStart=/bin/bash -lc 'source $HOME/.nvm/nvm.sh && nvm use default >/dev/null && exec npm run start -- -p 3000'
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
