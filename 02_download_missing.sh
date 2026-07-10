@@ -9,6 +9,18 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# ── Media root (host path Docker mounts as /data — set via the webapp's
+# Settings page, or REAPER_MEDIA_ROOT in .env) ───────────────────────────────
+if [ -f "$SCRIPT_DIR/.env" ]; then
+    set -a
+    # shellcheck source=/dev/null
+    source "$SCRIPT_DIR/.env"
+    set +a
+fi
+MEDIA_ROOT="${REAPER_MEDIA_ROOT:-/mnt/4TBExt/Media}"
+MUSIC_DIR="$MEDIA_ROOT/Music"
+INCOMING_DIR="$MEDIA_ROOT/incoming"
+
 # ── STEP 0: Parse Arguments ──────────────────────────────────────────────────
 PLAYLIST=""
 while [[ $# -gt 0 ]]; do
@@ -87,25 +99,29 @@ echo ""
 echo "► Starting download session for playlist: $PLAYLIST"
 echo "  Target Slug   : $SLUG"
 echo "  Missing Tracks: $TRACK_COUNT"
-echo "  Music library : /mnt/4TBExt/Media/Music"
-echo "  Download subdir: /mnt/4TBExt/Media/incoming"
+echo "  Music library : $MUSIC_DIR"
+echo "  Download subdir: $INCOMING_DIR"
 echo ""
 
 # ── STEP 4: Get PUID/PGID from the music folder owner ────────────────────────
-MUSIC_UID=$(stat -c '%u' /mnt/4TBExt/Media/Music)
-MUSIC_GID=$(stat -c '%g' /mnt/4TBExt/Media/Music)
+MUSIC_UID=$(stat -c '%u' "$MUSIC_DIR")
+MUSIC_GID=$(stat -c '%g' "$MUSIC_DIR")
 
 if [ "$MUSIC_UID" != "1000" ] || [ "$MUSIC_GID" != "1000" ]; then
     echo ""
     echo "⚠️  WARNING: Music folder owned by UID=$MUSIC_UID GID=$MUSIC_GID (expected 1000:1000)."
     echo "   Downloaded files may be unreadable by beets in Phase 2b."
     echo "   Update 'user:' in docker-compose.yml to match, or fix with:"
-    echo "     sudo chown -R \$(id -u):\$(id -g) /mnt/4TBExt/Media/incoming/"
+    echo "     sudo chown -R \$(id -u):\$(id -g) $INCOMING_DIR/"
     echo ""
-    read -r -p "   Continue anyway? [y/N] " _confirm
-    if [[ ! "$_confirm" =~ ^[Yy]$ ]]; then
-        echo "Aborted."
-        exit 1
+    if [ "${REAPER_ASSUME_YES:-0}" = "1" ]; then
+        echo "   REAPER_ASSUME_YES=1 set — continuing without prompting (webapp confirmed already)."
+    else
+        read -r -p "   Continue anyway? [y/N] " _confirm
+        if [[ ! "$_confirm" =~ ^[Yy]$ ]]; then
+            echo "Aborted."
+            exit 1
+        fi
     fi
 fi
 

@@ -1,0 +1,48 @@
+@import "tailwindcss";
+
+/* Reaper is a single committed dark/gothic-metal theme, not adaptive to
+   system light/dark preference — it should always look like the mascot art
+   in inspiration/, matching the source logo. */
+:root {
+  --color-bg: #0a0908;
+  --color-surface: #17120f;
+  --color-border: #332420;
+  --color-muted: #a3928c;
+  --color-text: #ededed;
+
+  /* Rust/blood-red accent sampled from the Reaper mascot art, replacing the
+     generic Vercel-cyan in inspiration/color_pallete.txt — that palette is
+     Next.js's own branding, not this app's identity. */
+  --color-accent: #b3423a;
+  --color-accent-strong: #8c2f28;
+  --color-accent-contrast: #fdf6f0;
+
+  --color-success: #00d764;
+  --color-error: #ff5a4d;
+  --color-warning: #ffab00;
+}
+
+@theme inline {
+  --color-bg: var(--color-bg);
+  --color-surface: var(--color-surface);
+  --color-border: var(--color-border);
+  --color-muted: var(--color-muted);
+  --color-text: var(--color-text);
+  --color-accent: var(--color-accent);
+  --color-accent-strong: var(--color-accent-strong);
+  --color-accent-contrast: var(--color-accent-contrast);
+  --color-success: var(--color-success);
+  --color-error: var(--color-error);
+  --color-warning: var(--color-warning);
+  --font-sans: var(--font-geist-sans);
+  --font-display: var(--font-metal-mania);
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-text);
+}

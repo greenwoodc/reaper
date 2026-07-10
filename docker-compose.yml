@@ -11,7 +11,7 @@ services:
       - PGID=1000
     volumes:
       - ./config:/config
-      - /mnt/4TBExt/Media:/data
+      - ${REAPER_MEDIA_ROOT:-/mnt/4TBExt/Media}:/data
     ports:
       - "54880-54881:54880-54881/tcp"
       - "54880-54881:54880-54881/udp"
