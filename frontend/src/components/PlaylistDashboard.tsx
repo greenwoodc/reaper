@@ -30,6 +30,12 @@ export default function PlaylistDashboard({ onSelect, onNew }: PlaylistDashboard
         className="w-56 drop-shadow-[0_0_40px_rgba(179,66,58,0.25)] sm:w-72"
       />
 
+      <p className="max-w-md text-center text-sm text-[var(--color-muted)]">
+        Reaper checks a Spotify playlist against your Navidrome library, downloads whatever&rsquo;s missing via
+        Soulseek, and builds the playlist for you. Upload a CSV to start a new one, or pick up where you left
+        off below.
+      </p>
+
       <div className="flex w-full flex-col gap-6">
         <button
           type="button"

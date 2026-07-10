@@ -14,6 +14,12 @@ interface WizardProps {
   onExit: () => void;
 }
 
+const STEP_DESCRIPTIONS: Record<1 | 2 | 3, string> = {
+  1: "Upload an Exportify CSV (a Spotify playlist export). Reaper searches your Navidrome library for every track and sorts them into found vs. missing.",
+  2: "Missing tracks get their search terms cleaned up, then Reaper downloads them via Soulseek and imports the results into your library with beets. This step can take a while — downloads happen one at a time in the background.",
+  3: "Navidrome is rescanned to pick up the newly imported files, then Reaper creates (or updates) the Navidrome playlist with everything it found, in your chosen order.",
+};
+
 export default function Wizard({
   initialSlug,
   initialPlaylistName,
@@ -41,6 +47,10 @@ export default function Wizard({
       </div>
 
       <Stepper activeStep={step} clickable={!!slug} onStepClick={setStep} />
+
+      <p className="max-w-xl text-center text-sm text-[var(--color-muted)]">
+        {STEP_DESCRIPTIONS[step]}
+      </p>
 
       <div className="flex w-full flex-1 items-center justify-center py-8">
         {step === 1 && (
