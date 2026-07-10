@@ -179,28 +179,23 @@ def cleanup_preview(slug):
 
 # ── Step 1: Upload & Scan ────────────────────────────────────────────────────
 
-def _scan_job(job, csv_path: Path, playlist_name: str, config: dict, rank_col, dry_run: bool):
+def _scan_job(job, csv_path: Path, playlist_name: str, config: dict, rank_col):
     def on_progress(current, total, track):
         job.phase = "scanning"
         job.current = current
         job.total = total
         job.message = f"{track['artist']} — {track['title']}"
 
-    result = run_scan(
-        csv_path, playlist_name, config,
-        rank_col=rank_col, dry_run=dry_run, on_progress=on_progress, quiet=True,
-    )
+    result = run_scan(csv_path, playlist_name, config, rank_col=rank_col, on_progress=on_progress)
     job.playlist_slug = result.slug
 
-    if not dry_run:
-        _write_meta(result.playlist_dir, playlist_name)
+    _write_meta(result.playlist_dir, playlist_name)
 
     job.result = {
         "slug": result.slug,
         "playlist_name": playlist_name,
         "found_count": len(result.found),
         "missing_count": len(result.missing),
-        "dry_run": dry_run,
     }
 
 
@@ -212,7 +207,6 @@ def upload_and_scan():
 
     name = (request.form.get("name") or "").strip()
     rank_col = (request.form.get("rank_col") or "").strip() or None
-    dry_run = (request.form.get("dry_run") or "false").lower() == "true"
 
     UPLOADS_DIR.mkdir(exist_ok=True)
     safe_name = secure_filename(file.filename) or "playlist.csv"
@@ -224,7 +218,7 @@ def upload_and_scan():
 
     config = load_config()
     job = jobs.create(kind="scan", playlist_slug=slug, playlist_name=playlist_name)
-    jobs.run_in_background(job, _scan_job, csv_path, playlist_name, config, rank_col, dry_run)
+    jobs.run_in_background(job, _scan_job, csv_path, playlist_name, config, rank_col)
     return jsonify(job.to_public_dict())
 
 
@@ -322,20 +316,20 @@ def _download_job(job, slug: str, playlist_name: str, assume_yes: bool):
 
     extra_env = {"REAPER_ASSUME_YES": "1"} if assume_yes else {}
     rc = _stream_subprocess(
-        job, ["./02_download_missing.sh", "--playlist", playlist_name],
+        job, ["./download_missing.sh", "--playlist", playlist_name],
         cwd=".", extra_env=extra_env, total_tracks=total_tracks,
     )
     if rc != 0:
-        raise RuntimeError(f"02_download_missing.sh exited with code {rc}")
+        raise RuntimeError(f"download_missing.sh exited with code {rc}")
 
     job.phase = "importing"
     job.current = 0
     job.total = 0
     job.message = "Importing downloaded files with beets..."
 
-    rc = _stream_subprocess(job, ["./02b_move_to_library.sh"], cwd=".")
+    rc = _stream_subprocess(job, ["./move_to_library.sh"], cwd=".")
     if rc != 0:
-        raise RuntimeError(f"02b_move_to_library.sh exited with code {rc}")
+        raise RuntimeError(f"move_to_library.sh exited with code {rc}")
 
     job.phase = "done"
     job.message = "Download and import complete."
@@ -393,7 +387,7 @@ def _finalize_job(job, slug: str, playlist_name: str, title):
     job.phase = "rescanning"
     job.message = "Triggering Navidrome library rescan..."
     rescan_result = run_rescan(
-        playlist_name, config, on_progress=on_progress, on_scan_tick=on_scan_tick, quiet=True,
+        playlist_name, config, on_progress=on_progress, on_scan_tick=on_scan_tick,
     )
 
     job.phase = "creating_playlist"
@@ -406,7 +400,7 @@ def _finalize_job(job, slug: str, playlist_name: str, title):
         job.total = total
 
     playlist_result = create_or_update_playlist(
-        playlist_name, config, title=title, quiet=True, on_progress=on_playlist_progress,
+        playlist_name, config, title=title, on_progress=on_playlist_progress,
     )
 
     job.phase = "done"

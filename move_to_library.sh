@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Reaper — Phase 2b: Import downloaded tracks into Music library via beets
+# Reaper — import downloaded tracks into the Music library via beets.
+# Invoked by the webapp backend (backend/routes.py); also runnable directly.
 #
 # Usage:
-#   ./02b_move_to_library.sh
+#   ./move_to_library.sh
 
 set -euo pipefail
 
@@ -43,4 +44,4 @@ else
 fi
 
 echo ""
-echo "Next: python3 03_rescan_and_merge.py --playlist \"<Playlist Name>\""
+echo "Next: finalize the playlist from the webapp (rescan + create/update in Navidrome)."

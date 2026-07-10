@@ -1,9 +1,7 @@
-"""Shared Subsonic/Navidrome API client, previously duplicated across all four
-phase scripts (auth token, api_get, connection check)."""
+"""Shared Subsonic/Navidrome API client used by every core/ module."""
 
 import hashlib
 import json
-import sys
 from typing import Optional
 from urllib import request, parse
 from urllib.error import URLError
@@ -94,19 +92,8 @@ def make_api(config: dict):
     return api_get, api_raw, base_url, auth_str
 
 
-def check_connection(api_get, quiet: bool = False) -> bool:
-    """Verify Navidrome is reachable and credentials are valid.
-
-    CLI callers keep today's sys.exit(1)-on-failure behavior; Flask callers
-    pass quiet=True and check the return value instead of dying.
-    """
+def check_connection(api_get) -> bool:
+    """Verify Navidrome is reachable and credentials are valid."""
     resp = api_get("ping.view", {})
     status = resp.get("subsonic-response", {}).get("status")
-    if status != "ok":
-        if quiet:
-            return False
-        print("❌  Cannot reach Navidrome — check config.yml URL and credentials.")
-        sys.exit(1)
-    if not quiet:
-        print("✓ Navidrome connection verified.")
-    return True
+    return status == "ok"

@@ -1,7 +1,7 @@
-"""Shared fuzzy-matching engine, previously duplicated verbatim in
-01_scan_navidrome.py and 03_rescan_and_merge.py (the two copies had already
-silently drifted on tie-breaking/fallback semantics — this is now the single
-source of truth, matching Phase 1's original behavior).
+"""Shared fuzzy-matching engine used by both scan and rescan. Originally
+duplicated verbatim between the two (the two copies had already silently
+drifted on tie-breaking/fallback semantics) — this is the single source of
+truth now, using the scan step's original behavior.
 """
 
 import re
