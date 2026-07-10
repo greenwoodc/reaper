@@ -39,7 +39,13 @@ def create_app() -> Flask:
 app = create_app()
 
 if __name__ == "__main__":
-    # Not 5000: macOS's AirPlay Receiver (AirTunes) squats on that port on the
-    # loopback interface and silently intercepts requests to "localhost:5000"
-    # (though not "127.0.0.1:5000", which is what makes this so confusing).
-    app.run(host="127.0.0.1", port=5001, debug=True, threaded=True, use_reloader=False)
+    # 0.0.0.0 so this is reachable from other devices (e.g. a frontend running
+    # on your Mac, talking to this over Tailscale/LAN) — safe here since this
+    # is a no-auth personal tool already scoped to a trusted network.
+    #
+    # Not port 5000: macOS's AirPlay Receiver (AirTunes) squats on that port on
+    # the loopback interface and silently intercepts requests to
+    # "localhost:5000" (though not "127.0.0.1:5000", which is what makes this
+    # so confusing). Linux hosts don't have this problem, but we keep 5001
+    # everywhere for consistency.
+    app.run(host="0.0.0.0", port=5001, debug=True, threaded=True, use_reloader=False)
