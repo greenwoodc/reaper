@@ -1,0 +1,42 @@
+directory: /mnt/media/Music
+move: yes
+overwrite: yes
+
+replace:
+    '[‐‑‒–—−]': '-'
+    (\s*\.\s*)+$: ''
+
+paths:
+    singleton: Non-Album/$albumartist/$album/$title
+    default: $albumartist/$album/$title
+    comp: Compilations/$album/$title
+
+import:
+    write: yes
+    move: yes
+    log: ~/beets-import.log
+    duplicate_action: skip
+    timid: no
+    quiet: yes
+    autotag: yes
+    resume: no
+    incremental: yes
+    clean: yes
+
+plugins: fetchart duplicates
+#plugins: fetchart duplicates chroma
+#chroma disabled to improve matching during import
+
+#acoustid:
+#    apikey: your_acoustid_key
+#not needed when not using chroma
+
+match:
+    strong_rec_thresh: 0.80
+    medium_rec_thresh: 0.30
+
+fetchart:
+    auto: yes
+
+chroma:
+    auto: yes

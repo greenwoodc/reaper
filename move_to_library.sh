@@ -15,7 +15,8 @@ if [ -f "$SCRIPT_DIR/.env" ]; then
     source "$SCRIPT_DIR/.env"
     set +a
 fi
-INCOMING_DIR="${REAPER_MEDIA_ROOT:-/mnt/4TBExt/Media}/incoming"
+MEDIA_ROOT="${REAPER_MEDIA_ROOT:-/mnt/media}"
+INCOMING_DIR="${REAPER_INCOMING_DIR:-$MEDIA_ROOT/incoming}"
 
 echo "► Cleaning up any incomplete downloads..."
 find "$INCOMING_DIR" -name "*.incomplete" -delete

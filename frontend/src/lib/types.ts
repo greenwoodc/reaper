@@ -136,6 +136,9 @@ export interface Settings {
   };
   paths: {
     media_root: string;
+    incoming_dir: string;
+    puid: string;
+    pgid: string;
   };
 }
 
@@ -161,5 +164,5 @@ export interface SettingsUpdate {
     max_stale_time: number;
     fast_search: boolean;
   }>;
-  paths?: Partial<{ media_root: string }>;
+  paths?: Partial<{ media_root: string; incoming_dir: string; puid: string; pgid: string }>;
 }

@@ -186,6 +186,7 @@ cython_debug/
 .cursorindexingignore
 
 config.yml
+config/sldl.conf
 github_token.txt
 
 # Reaper pipeline-generated state / user uploads

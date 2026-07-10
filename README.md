@@ -11,8 +11,9 @@ reaper/
 ├── core/                           ← shared pipeline logic (config, matching, scan, rescan, cleanup, playlist creation)
 ├── backend/                        ← Flask API, drives core/ + the two shell scripts below
 ├── frontend/                       ← Next.js wizard UI
+├── deploy/                         ← optional systemd deployment scripts (see "Persistent deployment")
 ├── config/
-│   ├── sldl.conf                  ← Soulseek credentials & download settings
+│   ├── sldl.conf                  ← Soulseek credentials & download settings (gitignored; copy from sldl.conf.example)
 │   └── active_search.csv          ← staging file used during downloads (auto-managed)
 ├── playlists/
 │   └── <playlist_slug>/
@@ -23,8 +24,8 @@ reaper/
 │       └── not_found.txt          ← tracks Soulseek couldn't source
 ├── Dockerfile                     ← builds sockseek image (pinned to release tag)
 ├── docker-compose.yml
-├── config.yml                     ← Navidrome credentials & pipeline settings
-├── .env                           ← REAPER_MEDIA_ROOT (host path Docker mounts as /data)
+├── config.yml                     ← Navidrome credentials & pipeline settings (gitignored; copy from config.example.yaml)
+├── .env                           ← REAPER_MEDIA_ROOT, REAPER_INCOMING_DIR, PUID, PGID (gitignored)
 ├── download_missing.sh            ← Soulseek download via sockseek (Docker)
 └── move_to_library.sh             ← beets import into the Music library
 ```
@@ -35,7 +36,11 @@ reaper/
 
 ### 1 — config.yml
 
-Create `config.yml` in the project root (or fill these in from the webapp's Settings page after first run):
+```bash
+cp config.example.yaml config.yml
+```
+
+Then edit it with your Navidrome details (or fill these in from the webapp's Settings page after first run):
 
 ```yaml
 navidrome_url: "http://localhost:4533/"
@@ -44,35 +49,20 @@ navidrome_password: "yourpassword"
 navidrome_client: "reaper"
 navidrome_version: "1.16.1"
 match_threshold: 0.80
-playlist_order: "asc"   # "asc" = #1 first, "desc" = countdown (#N → #1)
+playlist_order: "desc"   # "asc" = #1 first, "desc" = countdown (#N → #1)
 ```
 
 ### 2 — config/sldl.conf
 
-Copy `config/sldl.conf.example` to `config/sldl.conf` and set your Soulseek credentials and tuning:
-
-```properties
-username = your_username
-password = your_password
-path = /data/incoming
-format = mp3,flac,ogg
-pref-format = flac
-pref-min-bitrate = 128
-name-format = {artist}/{album}/{artist} - {title}
-concurrent-jobs = 3
-concurrent-searches = 3
-skip-existing = true
-search-timeout = 30000
-max-stale-time = 30000
-fast-search = false
-searches-per-time = 4
-searches-renew-time = 120
-desperate = true
+```bash
+cp config/sldl.conf.example config/sldl.conf
 ```
 
-> **Note:** `desperate = true` is required for reliable results, especially behind CGNAT. It searches by title only and filters by artist on results, which significantly improves hit rate.
+Then edit it with your Soulseek credentials — see `config/sldl.conf.example` for the full set of keys (bitrate/format preferences, search timing, etc.), most of which are also editable from the webapp's Settings page, which reads/writes this file directly.
 
-Most of these are also editable from the webapp's Settings page, which reads/writes this file directly.
+`config/sldl.conf` is gitignored, so it's safe to edit directly (or via Settings) whenever your credentials change — e.g. after rotating your Soulseek password — without any risk of committing them. Each person running Reaper keeps their own local copy; only `config/sldl.conf.example` (placeholder values) is checked into the repo.
+
+> **Note:** `desperate = true` is required for reliable results, especially behind CGNAT. It searches by title only and filters by artist on results, which significantly improves hit rate.
 
 ### 3 — Docker image
 
@@ -88,66 +78,28 @@ docker compose build
 
 ### 4 — Docker user permissions
 
-The sockseek container must write files as your user to avoid beets permission errors. Verify `docker-compose.yml` has:
+The sockseek container must write files as your user, or beets won't be able to read/move what it downloads. Set `PUID`/`PGID` in `.env` (defaults to `1000`/`1000`, the first regular user on most Linux distros, if unset):
 
-```yaml
-user: "1000:1000"
+```bash
+echo "PUID=$(id -u)" >> .env
+echo "PGID=$(id -g)" >> .env
 ```
 
-Check your UID/GID with `id -u && id -g`. If not 1000:1000, update accordingly. The webapp warns and asks for confirmation before downloading if it detects a mismatch on the media root.
+Also settable from the webapp's Settings page. If it's wrong, the webapp warns and asks for confirmation before downloading rather than silently producing files beets can't move.
 
-### 5 — Media root
+### 5 — Media root and incoming folder
 
-Set `REAPER_MEDIA_ROOT` in a `.env` file in the project root (defaults to `/mnt/4TBExt/Media` if unset). This is the host directory Docker mounts as `/data`, containing `Music/` (the library) and `incoming/` (fresh downloads awaiting beets import). Also settable from the webapp's Settings page.
+Set `REAPER_MEDIA_ROOT` in `.env` (defaults to `/mnt/media` if unset) — the host directory Docker mounts as `/data`, expecting a `Music/` subfolder (your library). Also settable from the webapp's Settings page.
+
+Downloads land in an `incoming/` staging folder before beets imports them — by default a subfolder of the media root, but you can point it elsewhere (e.g. a different/faster disk) with `REAPER_INCOMING_DIR`, in `.env` or the Settings page.
 
 ### 6 — Beets config
 
-Beets handles importing downloaded tracks into your library. Key settings in `~/.config/beets/config.yaml`:
-
-```yaml
-directory: /mnt/4TBExt/Media/Music
-move: yes
-overwrite: yes
-
-replace:
-    '[‐‑‒–—−]': '-'
-    (\s*\.\s*)+$: ''
-
-paths:
-    singleton: Non-Album/$albumartist/$album/$title
-    default: $albumartist/$album/$title
-    comp: Compilations/$album/$title
-
-import:
-    write: yes
-    move: yes
-    log: ~/beets-import.log
-    duplicate_action: skip
-    timid: no
-    quiet: yes
-    autotag: yes
-    resume: no
-    incremental: yes
-    clean: yes
-
-plugins: fetchart duplicates
-#plugins: fetchart duplicates chroma
-#chroma disabled to improve matching during import
-
-#acoustid:
-#    apikey: your_acoustid_key
-#not needed when not using chroma
-
-match:
-    strong_rec_thresh: 0.80
-    medium_rec_thresh: 0.30
-
-fetchart:
-    auto: yes
-
-chroma:
-    auto: yes
+```bash
+cp beets_config.yaml.example ~/.config/beets/config.yaml
 ```
+
+Then edit the `directory:` path to match your actual media root's `Music/` subfolder, and review the rest — beets handles importing downloaded tracks into your library, and this file lives entirely outside this repo (beets is a separate tool). `chroma`/`acoustid` are optional (better fingerprint-based matching) and disabled by default; enabling them needs a free AcoustID API key, everything else needs no credentials.
 
 ### 7 — Script permissions
 
@@ -250,9 +202,9 @@ Make sure `desperate = true` is set in `sldl.conf`. Without it, sockseek searche
 Reduce `searches-per-time` and `concurrent-searches` in `sldl.conf`. The pipeline will pause and resume automatically — the webapp shows a live countdown — this is normal behaviour.
 
 **Files not moving from incoming after beets import**
-Check file ownership — sockseek must run as your user (`user: "1000:1000"` in docker-compose.yml). Files written as root cannot be moved by beets. Fix existing files with:
+Check file ownership — sockseek must run as your user (`PUID`/`PGID` in `.env`, see Setup step 4). Files written as the wrong user cannot be moved by beets. Fix existing files with:
 ```bash
-sudo chown -R chris:chris /mnt/4TBExt/Media/incoming/
+sudo chown -R $(id -u):$(id -g) <your incoming dir>/
 ```
 
 **Beets skipping everything**
@@ -263,7 +215,7 @@ rm -f ~/.config/beets/state.pickle
 ```
 
 **Tracks downloaded but not appearing in Navidrome after Finalize**
-Check that Navidrome's music folder path covers `/mnt/4TBExt/Media/Music`. The Finalize step triggers a rescan automatically — if tracks still don't appear, trigger a manual scan in Navidrome → Settings → Library → Scan now.
+Check that Navidrome's music folder path covers your media root's `Music/` subfolder. The Finalize step triggers a rescan automatically — if tracks still don't appear, trigger a manual scan in Navidrome → Settings → Library → Scan now.
 
 **Bad artist tags in source CSV**
 The cleanup pass automatically handles most common issues: featured artist suffixes, `& The ...` backing band noise, collab separators (`;`, `,`, `feat.`, `with`), and unicode/punctuation hazards. For values that survive cleaning unchanged — typically where the source CSV itself has a genuinely wrong artist name — manual correction is still needed before downloading. Edit `missing_tracks.csv` directly, or fix the source CSV and re-scan.
