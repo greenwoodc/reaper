@@ -14,6 +14,12 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 echo "== Installing systemd unit =="
 sudo cp "$REPO_DIR/deploy/reaper-frontend.service" /etc/systemd/system/reaper-frontend.service
 
+echo "== Cleaning up any orphaned next-server from a previous failed start =="
+# Turbopack's server can leave a detached worker behind when the parent
+# (npm/next) exits on a bind error — systemd only tracks the direct child, so
+# a crash-loop can accumulate orphans that hold no useful port but never die.
+sudo pkill -f 'next-server' || true
+
 echo "== Enabling + starting =="
 sudo systemctl daemon-reload
 sudo systemctl enable reaper-frontend

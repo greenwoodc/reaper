@@ -162,6 +162,22 @@ python3 backend/app.py          # Flask API on :5001
 cd frontend && npm run dev      # wizard UI on :3000
 ```
 
+### 9 — Persistent deployment on the server (optional)
+
+To run the frontend as a systemd service on the homelab box instead of a
+manual `npm run dev` in a terminal, use the scripts in `deploy/`:
+
+```bash
+bash deploy/setup_frontend.sh              # installs Node 20 via nvm (Next.js 16 needs >=20.9.0), builds
+./deploy/install_frontend_service.sh       # installs + starts the reaper-frontend systemd service (needs sudo)
+```
+
+The service listens on port **3002**, not 3000 — the server already has other
+Docker containers bound to 3000 and 3001. `NEXT_PUBLIC_API_URL` is baked into
+the build at compile time (`frontend/.env.production`, gitignored), so
+`setup_frontend.sh` must be re-run (not just the systemd service restarted)
+whenever the backend's address changes.
+
 ---
 
 ## The wizard
