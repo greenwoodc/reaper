@@ -32,6 +32,10 @@ class Job:
     # frontend can order by recency without relying on dict ordering.
     tracks: dict = field(default_factory=dict)
     _track_seq: int = field(default=0, repr=False)
+    # Unix ms timestamp when a Soulseek search rate limit is expected to
+    # clear, or None when not currently rate-limited. The frontend ticks
+    # this down locally rather than polling every second for it.
+    rate_limit_until: Optional[float] = None
 
     def append_log(self, line: str, max_lines: int = 500) -> None:
         self.log.append(line)
@@ -61,6 +65,7 @@ class Job:
             "result": self.result,
             "error": self.error,
             "tracks": sorted(self.tracks.values(), key=lambda t: t["seq"]),
+            "rate_limit_until": self.rate_limit_until,
         }
 
 

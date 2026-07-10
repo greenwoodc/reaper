@@ -133,6 +133,11 @@ echo "────────────────────────�
 
 cd "$SCRIPT_DIR"
 
+# sockseek exits non-zero whenever *any* track fails (rejected transfer,
+# offline peer, no results, etc.) — completely normal for Soulseek P2P, not a
+# reason to abort the whole script before cleanup/cooldown run. Capture the
+# real exit code via PIPESTATUS instead of letting `set -e` kill us here.
+set +e
 # Verified argument: --max-retries limits endless loop behaviors on locked users
 docker compose run --rm --no-deps sldl \
     -c /config/sldl.conf \
@@ -141,10 +146,18 @@ docker compose run --rm --no-deps sldl \
     --title-col  "title" \
     --max-retries 1 \
     2>&1 | stdbuf -oL tee "$PLAYLIST_DIR/download_log.txt"
+SLDL_EXIT_CODE=${PIPESTATUS[0]}
+set -e
 
 echo ""
 echo "──────────────────────────────────────────────────────────────"
-echo "✓ Download session complete."
+if [ "$SLDL_EXIT_CODE" -ne 0 ]; then
+    echo "ℹ️  sockseek finished with some tracks unresolved (exit code $SLDL_EXIT_CODE)."
+    echo "   That's normal for Soulseek — see playlists/$SLUG/download_log.txt for"
+    echo "   details. Re-running this playlist later will retry what's still missing."
+else
+    echo "✓ Download session complete."
+fi
 echo "  Playlist Folder Log: playlists/$SLUG/download_log.txt"
 
 # Clean up our temporary container-facing CSV staging file
