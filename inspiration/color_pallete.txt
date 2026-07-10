@@ -1,0 +1,32 @@
+The Next.js App Palette
+1. Primary Brand Color:
+
+Next Black: #000000
+
+Use: Global background, text, and branding elements. The definitive Next.js look.
+
+2. Secondary/Accent Color:
+
+Vercel Cyan: #0070F3
+
+Use: Primary buttons (CTAs), links, active states, and focus indicators. Provides high contrast and energy.
+
+3. Neutral Grays (Dark Mode UI):
+
+Background Gray: #111111 (Slightly lighter than black for depth)
+
+Surface Gray: #1A1A1A (For cards, nav bars, and containers)
+
+Border Gray: #333333 (For subtle dividers and borders)
+
+Subtle Text Gray: #888888 (For secondary information)
+
+High-Contrast Text: #EDEDED (Off-white for primary text readability)
+
+4. Status/Feedback Colors:
+
+Success Green: #00D764
+
+Error Red: #FF0033
+
+Warning Yellow: #FFAB00

@@ -6,7 +6,15 @@
 
 set -euo pipefail
 
-INCOMING_DIR="/mnt/4TBExt/Media/incoming"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if [ -f "$SCRIPT_DIR/.env" ]; then
+    set -a
+    # shellcheck source=/dev/null
+    source "$SCRIPT_DIR/.env"
+    set +a
+fi
+INCOMING_DIR="${REAPER_MEDIA_ROOT:-/mnt/4TBExt/Media}/incoming"
 
 echo "► Cleaning up any incomplete downloads..."
 find "$INCOMING_DIR" -name "*.incomplete" -delete

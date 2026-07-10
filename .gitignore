@@ -182,3 +182,7 @@ cython_debug/
 
 config.yml
 github_token.txt
+
+# Reaper pipeline-generated state / user uploads
+playlists/
+uploads/
