@@ -182,3 +182,4 @@ cython_debug/
 
 config.yml
 github_token.txt
+config/sldl.conf
