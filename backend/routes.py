@@ -9,6 +9,7 @@ import csv
 import json
 import os
 import re
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -22,6 +23,7 @@ from core.cleanup import clean_missing_csv
 from core.rescan import run_rescan
 from core.create_playlist import create_or_update_playlist
 from core.settings import get_settings, update_settings, read_media_root
+from core.subsonic import make_api_get
 
 from backend.jobs import jobs
 
@@ -70,10 +72,26 @@ def _write_meta(playlist_dir: Path, playlist_name: str) -> None:
     meta_file.write_text(json.dumps({"playlist_name": playlist_name}, indent=2))
 
 
+def _navidrome_playlist_names() -> set | None:
+    """Names of playlists that currently exist in Navidrome, or None if
+    Navidrome couldn't be reached — callers should treat None as "unknown"
+    rather than "not in Navidrome", so a transient outage doesn't make every
+    playlist look falsely unimported."""
+    try:
+        api_get = make_api_get(load_config())
+        resp = api_get("getPlaylists.view", {})
+        playlists = resp.get("subsonic-response", {}).get("playlists", {}).get("playlist", [])
+        return {pl.get("name") for pl in playlists}
+    except Exception:
+        return None
+
+
 # ── Playlist listing / detail ────────────────────────────────────────────────
 
 @api_bp.get("/playlists")
 def list_playlists():
+    navidrome_names = _navidrome_playlist_names()
+
     out = []
     if PLAYLISTS_DIR.exists():
         for d in sorted(PLAYLISTS_DIR.iterdir()):
@@ -92,13 +110,26 @@ def list_playlists():
                     missing_count = sum(1 for _ in csv.DictReader(f))
 
             meta = _read_meta(d)
+            playlist_name = meta.get("playlist_name", d.name.replace("_", " ").title())
+            in_navidrome = (playlist_name in navidrome_names) if navidrome_names is not None else None
+
             out.append({
                 "slug": d.name,
-                "playlist_name": meta.get("playlist_name", d.name.replace("_", " ").title()),
+                "playlist_name": playlist_name,
                 "found_count": found_count,
                 "missing_count": missing_count,
+                "in_navidrome": in_navidrome,
             })
     return jsonify(out)
+
+
+@api_bp.delete("/playlists/<slug>")
+def delete_playlist(slug):
+    playlist_dir = PLAYLISTS_DIR / slug
+    if not playlist_dir.is_dir() or playlist_dir.resolve().parent != PLAYLISTS_DIR.resolve():
+        return jsonify({"error": "playlist not found"}), 404
+    shutil.rmtree(playlist_dir)
+    return jsonify({"deleted": slug})
 
 
 @api_bp.get("/playlists/<slug>/found")
