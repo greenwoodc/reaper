@@ -46,7 +46,7 @@ export default function FinalizeStep({ slug, playlistName }: FinalizeStepProps) 
         </p>
         {r.missing_ranks.length > 0 && (
           <p className="text-xs text-[var(--color-warning)]">
-            {r.missing_ranks.length} ranks still missing
+            {r.missing_ranks.length} track{r.missing_ranks.length === 1 ? "" : "s"} still missing
           </p>
         )}
       </div>
