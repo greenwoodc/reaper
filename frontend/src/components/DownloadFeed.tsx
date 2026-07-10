@@ -1,12 +1,15 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import type { TrackEvent } from "@/lib/types";
 
 interface DownloadFeedProps {
   tracks: TrackEvent[];
   maxVisible?: number;
+  /** How long a finished (succeeded/failed) track stays visible before it
+   * fades out, in ms. */
+  completedTtlMs?: number;
 }
 
 const STATUS_ICON: Record<TrackEvent["status"], ReactNode> = {
@@ -35,13 +38,51 @@ const STATUS_LABEL: Record<TrackEvent["status"], string> = {
   failed: "Failed",
 };
 
-export default function DownloadFeed({ tracks, maxVisible = 8 }: DownloadFeedProps) {
-  const visible = tracks.slice(-maxVisible);
+export default function DownloadFeed({ tracks, maxVisible = 8, completedTtlMs = 5000 }: DownloadFeedProps) {
+  const [completedAt, setCompletedAt] = useState<Record<string, number>>({});
+  const [prevTracks, setPrevTracks] = useState(tracks);
+  const [now, setNow] = useState(() => Date.now());
+
+  // Stamp the moment each track first reaches a terminal status. Adjusting
+  // state directly during render (guarded by the prevTracks comparison) per
+  // https://react.dev/learn/you-might-not-need-an-effect#adjusting-some-state-when-a-prop-changes
+  // rather than in a useEffect, which would double-render every update.
+  if (tracks !== prevTracks) {
+    setPrevTracks(tracks);
+    const updates: Record<string, number> = {};
+    for (const t of tracks) {
+      if ((t.status === "succeeded" || t.status === "failed") && !(t.id in completedAt)) {
+        // Reuse the already-ticked `now` state rather than calling Date.now()
+        // fresh here — render must stay pure. `now` lags real time by at
+        // most the 500ms tick interval, which is irrelevant for a 5s TTL.
+        updates[t.id] = now;
+      }
+    }
+    if (Object.keys(updates).length > 0) {
+      setCompletedAt((prev) => ({ ...prev, ...updates }));
+    }
+  }
+
+  // Re-render periodically so completed tracks age out even if no new
+  // track events arrive in the meantime.
+  useEffect(() => {
+    const interval = setInterval(() => setNow(Date.now()), 500);
+    return () => clearInterval(interval);
+  }, []);
+
+  const visible = tracks
+    .filter((t) => {
+      const at = completedAt[t.id];
+      return at === undefined || now - at < completedTtlMs;
+    })
+    .slice(-maxVisible);
 
   if (visible.length === 0) {
     return (
       <p className="text-center text-xs text-[var(--color-muted)]">
-        Waiting for the first search to start...
+        {tracks.length === 0
+          ? "Waiting for the first search to start..."
+          : "All caught up — waiting for the next search..."}
       </p>
     );
   }
