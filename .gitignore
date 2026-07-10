@@ -10,19 +10,21 @@ __pycache__/
 *.so
 
 # Distribution / packaging
+# (root-scoped with a leading slash — unscoped "lib/" etc. would also match
+# frontend/src/lib/, which silently kept it out of git entirely)
 .Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
+/build/
+/develop-eggs/
+/dist/
+/downloads/
+/eggs/
+/.eggs/
+/lib/
+/lib64/
+/parts/
+/sdist/
+/var/
+/wheels/
 share/python-wheels/
 *.egg-info/
 .installed.cfg
