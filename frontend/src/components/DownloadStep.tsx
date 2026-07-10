@@ -171,7 +171,9 @@ export default function DownloadStep({ slug, onDone }: DownloadStepProps) {
           {PHASE_LABELS[job.phase] || job.message || "Working..."}
         </p>
 
-        {job.rate_limit_until && <RateLimitCountdown resumeAt={job.rate_limit_until} />}
+        {job.rate_limit_seconds != null && (
+          <RateLimitCountdown secondsRemaining={job.rate_limit_seconds} />
+        )}
 
         {job.phase === "downloading" && <DownloadFeed tracks={job.tracks} />}
 
