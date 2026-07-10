@@ -60,6 +60,9 @@ export default function SettingsForm() {
   const [desperate, setDesperate] = useState(true);
   const [skipExisting, setSkipExisting] = useState(true);
   const [mediaRoot, setMediaRoot] = useState("");
+  const [incomingDir, setIncomingDir] = useState("");
+  const [puid, setPuid] = useState("1000");
+  const [pgid, setPgid] = useState("1000");
   const [concurrentJobs, setConcurrentJobs] = useState("3");
   const [concurrentSearches, setConcurrentSearches] = useState("3");
   const [searchesPerTime, setSearchesPerTime] = useState("4");
@@ -88,6 +91,9 @@ export default function SettingsForm() {
         setDesperate(s.download.desperate);
         setSkipExisting(s.download.skip_existing);
         setMediaRoot(s.paths.media_root);
+        setIncomingDir(s.paths.incoming_dir);
+        setPuid(s.paths.puid);
+        setPgid(s.paths.pgid);
         setConcurrentJobs(s.advanced.concurrent_jobs);
         setConcurrentSearches(s.advanced.concurrent_searches);
         setSearchesPerTime(s.advanced.searches_per_time);
@@ -136,7 +142,7 @@ export default function SettingsForm() {
         max_stale_time: Number(maxStaleTime),
         fast_search: fastSearch,
       },
-      paths: { media_root: mediaRoot },
+      paths: { media_root: mediaRoot, incoming_dir: incomingDir, puid, pgid },
     };
 
     try {
@@ -310,14 +316,53 @@ export default function SettingsForm() {
             type="text"
             value={mediaRoot}
             onChange={(e) => setMediaRoot(e.target.value)}
-            placeholder="/mnt/4TBExt/Media"
+            placeholder="/mnt/media"
             className={inputClass}
           />
         </Field>
         <p className="text-xs text-[var(--color-muted)]">
           Mounted into the Soulseek container as <code>/data</code>. Expects a <code>Music/</code> subfolder (your
-          library) and an <code>incoming/</code> subfolder (downloads awaiting import). Changing this requires
-          restarting the Docker container (<code>docker compose down</code> then re-running Phase 2).
+          library). Changing this requires restarting the Docker container (<code>docker compose down</code> then
+          re-running a download).
+        </p>
+        <Field label="Incoming directory (host path)">
+          <input
+            type="text"
+            value={incomingDir}
+            onChange={(e) => setIncomingDir(e.target.value)}
+            placeholder={`${mediaRoot || "/mnt/media"}/incoming`}
+            className={inputClass}
+          />
+        </Field>
+        <p className="text-xs text-[var(--color-muted)]">
+          Staging area for fresh downloads awaiting beets import. Defaults to an <code>incoming/</code> subfolder of
+          the media root above, but can point elsewhere (e.g. a faster disk) — mounted into the Soulseek container
+          separately from the media root.
+        </p>
+        <div className="grid grid-cols-2 gap-4">
+          <Field label="User ID (PUID)">
+            <input
+              type="text"
+              inputMode="numeric"
+              value={puid}
+              onChange={(e) => setPuid(e.target.value)}
+              className={inputClass}
+            />
+          </Field>
+          <Field label="Group ID (PGID)">
+            <input
+              type="text"
+              inputMode="numeric"
+              value={pgid}
+              onChange={(e) => setPgid(e.target.value)}
+              className={inputClass}
+            />
+          </Field>
+        </div>
+        <p className="text-xs text-[var(--color-muted)]">
+          Must match the owner of the folders above (check with <code>id -u</code> / <code>id -g</code> on the host)
+          — the Soulseek container writes files as this user so beets can read and move them afterward. Defaults to
+          1000, the first regular user on most Linux distros.
         </p>
       </Section>
 

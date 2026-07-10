@@ -1,3 +1,5 @@
+# systemd units can't read .env/env-var substitution, so User/WorkingDirectory/
+# ExecStart below are hardcoded to this deployment — adjust for yours.
 [Unit]
 Description=Reaper backend (Flask API)
 After=network.target

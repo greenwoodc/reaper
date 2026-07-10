@@ -1,11 +1,9 @@
 """Read/write the settings surfaced by the webapp's Settings page:
 config.yml (Navidrome + matching), config/sldl.conf (Soulseek + download
-prefs), and .env (host media directory used by docker-compose.yml and the
-Phase 2/2b shell scripts).
+prefs), and .env (host media/incoming directories used by docker-compose.yml
+and download_missing.sh/move_to_library.sh).
 
-Not used by the CLI phase scripts directly — they keep reading config.yml
-and config/sldl.conf themselves. This module is the write path the webapp
-uses to edit those same files.
+This module is the write path the webapp uses to edit those same files.
 """
 
 import yaml
@@ -15,7 +13,7 @@ from core.config import CONFIG_FILE, DEFAULTS, load_config
 
 SLDL_CONF_PATH = Path("config/sldl.conf")
 ENV_PATH = Path(".env")
-DEFAULT_MEDIA_ROOT = "/mnt/4TBExt/Media"
+DEFAULT_MEDIA_ROOT = "/mnt/media"
 
 # sldl.conf keys the Settings page manages, and their "primary" vs "advanced"
 # grouping. Any other keys already in the file (listen-port, name-format,
@@ -71,23 +69,61 @@ def write_sldl_conf(updates: dict[str, str], path: Path = SLDL_CONF_PATH) -> Non
     path.write_text("\n".join(out) + "\n")
 
 
-def read_media_root() -> str:
+def _read_env_var(key: str, default: str = "") -> str:
     if ENV_PATH.exists():
         for line in ENV_PATH.read_text().splitlines():
-            if line.strip().startswith("REAPER_MEDIA_ROOT="):
+            if line.strip().startswith(f"{key}="):
                 return line.split("=", 1)[1].strip()
-    return DEFAULT_MEDIA_ROOT
+    return default
+
+
+def _write_env_var(key: str, value: str) -> None:
+    lines = ENV_PATH.read_text().splitlines() if ENV_PATH.exists() else []
+    for i, line in enumerate(lines):
+        if line.strip().startswith(f"{key}="):
+            lines[i] = f"{key}={value}"
+            break
+    else:
+        lines.append(f"{key}={value}")
+    ENV_PATH.write_text("\n".join(lines) + "\n")
+
+
+def read_media_root() -> str:
+    return _read_env_var("REAPER_MEDIA_ROOT", DEFAULT_MEDIA_ROOT)
 
 
 def write_media_root(value: str) -> None:
-    lines = ENV_PATH.read_text().splitlines() if ENV_PATH.exists() else []
-    for i, line in enumerate(lines):
-        if line.strip().startswith("REAPER_MEDIA_ROOT="):
-            lines[i] = f"REAPER_MEDIA_ROOT={value}"
-            break
-    else:
-        lines.append(f"REAPER_MEDIA_ROOT={value}")
-    ENV_PATH.write_text("\n".join(lines) + "\n")
+    _write_env_var("REAPER_MEDIA_ROOT", value)
+
+
+def read_incoming_dir() -> str:
+    """The staging dir for fresh downloads awaiting beets import. Empty
+    return means "not overridden" — callers should derive the effective
+    value as f"{media_root}/incoming"."""
+    return _read_env_var("REAPER_INCOMING_DIR", "")
+
+
+def write_incoming_dir(value: str) -> None:
+    _write_env_var("REAPER_INCOMING_DIR", value)
+
+
+def read_puid() -> str:
+    """The host UID that must own the media/incoming folders — the sockseek
+    container runs as this uid (docker-compose.yml's PUID), and beets needs
+    matching ownership on what it downloads to move/tag files."""
+    return _read_env_var("PUID", "1000")
+
+
+def write_puid(value: str) -> None:
+    _write_env_var("PUID", value)
+
+
+def read_pgid() -> str:
+    return _read_env_var("PGID", "1000")
+
+
+def write_pgid(value: str) -> None:
+    _write_env_var("PGID", value)
 
 
 def get_settings() -> dict:
@@ -96,6 +132,7 @@ def get_settings() -> dict:
     frontend once saved."""
     config = load_config()
     sldl = read_sldl_conf()
+    media_root = read_media_root()
 
     return {
         "navidrome": {
@@ -124,7 +161,10 @@ def get_settings() -> dict:
         }
         | {"fast_search": sldl.get("fast-search", "false") == "true"},
         "paths": {
-            "media_root": read_media_root(),
+            "media_root": media_root,
+            "incoming_dir": read_incoming_dir() or f"{media_root}/incoming",
+            "puid": read_puid(),
+            "pgid": read_pgid(),
         },
     }
 
@@ -184,3 +224,17 @@ def update_settings(payload: dict) -> None:
     paths = payload.get("paths") or {}
     if paths.get("media_root"):
         write_media_root(paths["media_root"])
+
+    if "incoming_dir" in paths:
+        effective_media_root = paths.get("media_root") or read_media_root()
+        default_incoming = f"{effective_media_root}/incoming"
+        incoming_value = paths["incoming_dir"] or default_incoming
+        # Only persist an override when it actually differs from the derived
+        # default — keeps .env clean and avoids a stale override surviving a
+        # later media_root change that the user didn't also update here.
+        write_incoming_dir("" if incoming_value == default_incoming else incoming_value)
+
+    if paths.get("puid"):
+        write_puid(str(paths["puid"]))
+    if paths.get("pgid"):
+        write_pgid(str(paths["pgid"]))

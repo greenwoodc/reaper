@@ -43,7 +43,7 @@ There is no test suite — verify backend changes by running the Flask app and e
 
 **Config precedence**: `core/config.py`'s `load_config()` reads `config.yml` (gitignored, real credentials) merged over a `DEFAULTS` dict. Auth against Navidrome is Subsonic-style: `md5(password + salt)` with a hardcoded salt (`"reaper"`). The webapp's Settings page (`core/settings.py`) reads/writes `config.yml` and `config/sldl.conf` directly — it only touches the specific keys it manages and preserves everything else (comments in `sldl.conf`, unmanaged keys) untouched on save, except `config.yml` itself loses its comments on save (plain `yaml.safe_dump`, not comment-preserving).
 
-**Media root**: `download_missing.sh`/`move_to_library.sh` derive `MUSIC_DIR`/`INCOMING_DIR` from `REAPER_MEDIA_ROOT` in a gitignored `.env` file (default `/mnt/4TBExt/Media` if unset), which also feeds `docker-compose.yml`'s volume mount (`${REAPER_MEDIA_ROOT:-/mnt/4TBExt/Media}:/data`). Settable via the webapp's Settings page or by hand-editing `.env`.
+**Media root and incoming dir**: `download_missing.sh`/`move_to_library.sh` derive `MUSIC_DIR` from `REAPER_MEDIA_ROOT` in a gitignored `.env` file (default `/mnt/media` if unset), which also feeds `docker-compose.yml`'s volume mount (`${REAPER_MEDIA_ROOT:-/mnt/media}:/data`). `INCOMING_DIR` defaults to `<media_root>/incoming` but is independently overridable via `REAPER_INCOMING_DIR` (e.g. to stage downloads on a different disk) — `download_missing.sh` computes and `export`s it so `docker-compose.yml` can mount it separately at `/data/incoming` (kept as a flat env-var reference there rather than a nested `${...:-...}` default, since Compose's interpolation doesn't reliably resolve nested variable references). `PUID`/`PGID` (also in `.env`, default `1000`/`1000`) must match the host owner of these folders or beets can't move what sockseek downloads — `docker-compose.yml`'s `user:` field and the backend's mismatch check (`backend/routes.py`'s `_check_uid_gid_mismatch`) both read these instead of a hardcoded value. All four are settable via the webapp's Settings page or by hand-editing `.env`.
 
 **`sockseek` naming churn**: the upstream project has been renamed twice (`slsk-batchdl` → `sldl` → `sockseek`). The `Dockerfile` clones a pinned release tag rather than `master` specifically to survive this — when upgrading, update the `--branch` tag and the `.csproj` path together.
 
@@ -53,7 +53,7 @@ There is no test suite — verify backend changes by running the Flask app and e
 
 ## Secrets
 
-`config.yml`, `config/sldl.conf`, `.env`, and `github_token.txt` hold live credentials and are gitignored — never commit them. `config/sldl.conf.example` is the checked-in placeholder template.
+`config.yml`, `config/sldl.conf`, `.env`, and `github_token.txt` hold live credentials and are gitignored — never commit them. `config.example.yaml` and `config/sldl.conf.example` are the checked-in placeholder templates (`cp` to the real filename and edit).
 
 ## Git workflow
 

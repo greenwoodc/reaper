@@ -71,7 +71,7 @@ def clean_title(title: str) -> str:
     return title.strip()
 
 
-def clean_missing_csv(csv_path: Path, apply: bool = True) -> list[dict]:
+def clean_missing_csv(csv_path: Path | str, apply: bool = True) -> list[dict]:
     """Clean artist/title columns of csv_path for Soulseek compatibility.
 
     Returns a list of row dicts (cleaned values, plus _orig_artist/_orig_title)
@@ -79,6 +79,7 @@ def clean_missing_csv(csv_path: Path, apply: bool = True) -> list[dict]:
     True, csv_path is overwritten in place with the cleaned values (original
     script's only behavior).
     """
+    csv_path = Path(csv_path)
     with open(csv_path, 'r', encoding='utf-8-sig') as f:
         reader = csv.DictReader(f)
         fieldnames = reader.fieldnames

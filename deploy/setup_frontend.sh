@@ -12,7 +12,26 @@
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-API_URL="${REAPER_API_URL:-http://100.92.200.19:5001}"
+
+# deploy/.env is gitignored — drop a REAPER_API_URL=http://<your-server>:5001
+# line in there once so you don't have to pass it on every run.
+if [ -f "$REPO_DIR/deploy/.env" ]; then
+    set -a
+    # shellcheck source=/dev/null
+    source "$REPO_DIR/deploy/.env"
+    set +a
+fi
+
+if [ -z "${REAPER_API_URL:-}" ]; then
+    echo "!! REAPER_API_URL is not set."
+    echo "!! This gets baked into the frontend build as NEXT_PUBLIC_API_URL, so it"
+    echo "!! must be the address browsers on your network will use to reach the"
+    echo "!! backend (e.g. its Tailscale IP or LAN IP), not localhost."
+    echo "!! Either export it, or put it in deploy/.env (gitignored):"
+    echo "!!   echo 'REAPER_API_URL=http://100.x.x.x:5001' > deploy/.env"
+    exit 1
+fi
+API_URL="$REAPER_API_URL"
 
 echo "== Killing stale next-server process, if any =="
 pkill -f 'next-server' || true

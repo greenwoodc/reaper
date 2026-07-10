@@ -1,3 +1,7 @@
+# systemd units can't read .env/env-var substitution, so User/WorkingDirectory/
+# the port below are hardcoded to this deployment — adjust all three for yours
+# (the port here, 3002, was picked to dodge two other Docker containers
+# already bound to 3000/3001 on this particular box; yours may differ).
 [Unit]
 Description=Reaper frontend (Next.js)
 After=network.target

@@ -5,13 +5,21 @@ services:
       dockerfile: Dockerfile
     image: slsk-batchdl
     container_name: sldl
-    user: "1000:1000"
+    # Must match the host owner of the media/incoming folders, or beets won't
+    # be able to move/read what sockseek downloads. Defaults to 1000:1000
+    # (the first non-system user on most Linux distros) — override PUID/PGID
+    # in .env if your user has a different id (check with `id -u && id -g`).
+    user: "${PUID:-1000}:${PGID:-1000}"
     environment:
-      - PUID=1000
-      - PGID=1000
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
     volumes:
       - ./config:/config
-      - ${REAPER_MEDIA_ROOT:-/mnt/4TBExt/Media}:/data
+      - ${REAPER_MEDIA_ROOT:-/mnt/media}:/data
+      # INCOMING_DIR is exported by download_missing.sh (defaults to
+      # <media root>/incoming, overridable via REAPER_INCOMING_DIR) — mounted
+      # separately so it can live on a different disk than the rest of /data.
+      - ${INCOMING_DIR}:/data/incoming
     ports:
       - "54880-54881:54880-54881/tcp"
       - "54880-54881:54880-54881/udp"

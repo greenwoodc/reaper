@@ -18,9 +18,14 @@ if [ -f "$SCRIPT_DIR/.env" ]; then
     source "$SCRIPT_DIR/.env"
     set +a
 fi
-MEDIA_ROOT="${REAPER_MEDIA_ROOT:-/mnt/4TBExt/Media}"
+MEDIA_ROOT="${REAPER_MEDIA_ROOT:-/mnt/media}"
 MUSIC_DIR="$MEDIA_ROOT/Music"
-INCOMING_DIR="$MEDIA_ROOT/incoming"
+# Staging area for fresh downloads awaiting beets import. Usually a subfolder
+# of the media root, but overridable (e.g. to a different disk) via
+# REAPER_INCOMING_DIR in .env or the webapp's Settings page. Exported so
+# docker-compose.yml's volume mount can reference it directly.
+INCOMING_DIR="${REAPER_INCOMING_DIR:-$MEDIA_ROOT/incoming}"
+export INCOMING_DIR
 
 # ── STEP 0: Parse Arguments ──────────────────────────────────────────────────
 PLAYLIST=""

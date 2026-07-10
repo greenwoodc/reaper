@@ -1,5 +1,5 @@
-username = agonizing
-password = sWUfr0sBP39keD
+username = your_soulseek_username
+password = your_soulseek_password
 path = /data/incoming
 format = mp3,flac,ogg
 pref-format = flac

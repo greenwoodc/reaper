@@ -1,0 +1,7 @@
+navidrome_url: "http://localhost:4533/"
+navidrome_user: "admin"
+navidrome_password: "yourpassword"
+navidrome_client: "reaper"
+navidrome_version: "1.16.1"
+match_threshold: 0.80
+playlist_order: "desc"   # "asc" = #1 first, "desc" = countdown (#N → #1)

@@ -22,7 +22,7 @@ from core.scan import run_scan
 from core.cleanup import clean_missing_csv
 from core.rescan import run_rescan
 from core.create_playlist import create_or_update_playlist
-from core.settings import get_settings, update_settings, read_media_root
+from core.settings import get_settings, update_settings, read_media_root, read_puid, read_pgid
 from core.subsonic import make_api_get
 
 from backend.jobs import jobs
@@ -31,8 +31,6 @@ api_bp = Blueprint("api", __name__, url_prefix="/api")
 
 PLAYLISTS_DIR = Path("playlists")
 UPLOADS_DIR = Path("uploads")
-
-EXPECTED_UID_GID = 1000
 
 # sockseek's actual log format (confirmed against a live run):
 #   [core] Downloaded 14, Failed 11 of Total 28 (89.29 %)
@@ -230,7 +228,8 @@ def _check_uid_gid_mismatch():
         st = music_dir.stat()
     except FileNotFoundError:
         return False, None, None
-    return (st.st_uid != EXPECTED_UID_GID or st.st_gid != EXPECTED_UID_GID), st.st_uid, st.st_gid
+    expected_uid, expected_gid = int(read_puid()), int(read_pgid())
+    return (st.st_uid != expected_uid or st.st_gid != expected_gid), st.st_uid, st.st_gid
 
 
 def _stream_subprocess(job, args, cwd, extra_env=None, total_tracks=None):
@@ -304,8 +303,9 @@ def _download_job(job, slug: str, playlist_name: str, assume_yes: bool):
         job.phase = "uid_gid_check"
         job.message = (
             f"Music folder owned by UID={uid} GID={gid} (expected "
-            f"{EXPECTED_UID_GID}:{EXPECTED_UID_GID}). Downloaded files may be "
-            "unreadable by beets. Continue anyway?"
+            f"{read_puid()}:{read_pgid()} — set PUID/PGID in Settings if that's "
+            "wrong for this host). Downloaded files may be unreadable by beets. "
+            "Continue anyway?"
         )
         return
 
