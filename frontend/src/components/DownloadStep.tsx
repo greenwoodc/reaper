@@ -1,10 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { confirmJob, getCleanupPreview, startDownload } from "@/lib/api";
 import { useJob } from "@/lib/useJob";
+import { useJobLog } from "@/lib/useJobLog";
 import type { CleanupPreview } from "@/lib/types";
 import RadialProgress from "./RadialProgress";
+import DownloadFeed from "./DownloadFeed";
 
 interface DownloadStepProps {
   slug: string;
@@ -23,8 +25,16 @@ export default function DownloadStep({ slug, onDone }: DownloadStepProps) {
   const [jobId, setJobId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
+  const [showLog, setShowLog] = useState(false);
+  const logEndRef = useRef<HTMLDivElement>(null);
 
   const job = useJob(jobId);
+  const isActive = job?.status === "running" || job?.status === "queued";
+  const log = useJobLog(jobId, showLog && isActive);
+
+  useEffect(() => {
+    logEndRef.current?.scrollIntoView({ block: "end" });
+  }, [log]);
 
   useEffect(() => {
     getCleanupPreview(slug)
@@ -116,7 +126,7 @@ export default function DownloadStep({ slug, onDone }: DownloadStepProps) {
 
   if (job && (job.status === "running" || job.status === "queued")) {
     return (
-      <div className="flex flex-col items-center gap-4">
+      <div className="flex w-full max-w-lg flex-col items-center gap-4">
         <RadialProgress
           current={job.current}
           total={job.total}
@@ -126,6 +136,35 @@ export default function DownloadStep({ slug, onDone }: DownloadStepProps) {
         <p className="max-w-xs truncate text-center text-sm text-[var(--color-muted)]">
           {PHASE_LABELS[job.phase] || job.message || "Working..."}
         </p>
+
+        {job.phase === "downloading" && <DownloadFeed tracks={job.tracks} />}
+
+        <button
+          type="button"
+          onClick={() => setShowLog((v) => !v)}
+          className="text-xs text-[var(--color-accent)] hover:opacity-80"
+        >
+          {showLog ? "Hide" : "Show"} raw log
+        </button>
+        {showLog && (
+          <div className="w-full rounded-md border border-[var(--color-border)] bg-black/40 p-3">
+            {log.length === 0 ? (
+              <p className="text-xs text-[var(--color-muted)]">
+                No output yet — this is normal while Docker builds the sockseek image on first
+                run, which can take several minutes with no visible progress.
+              </p>
+            ) : (
+              <div className="max-h-64 overflow-y-auto font-mono text-[11px] leading-relaxed text-[var(--color-muted)]">
+                {log.map((line, i) => (
+                  <div key={i} className="whitespace-pre-wrap">
+                    {line}
+                  </div>
+                ))}
+                <div ref={logEndRef} />
+              </div>
+            )}
+          </div>
+        )}
       </div>
     );
   }

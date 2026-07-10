@@ -31,14 +31,22 @@ UPLOADS_DIR = Path("uploads")
 
 EXPECTED_UID_GID = 1000
 
-# Best-effort progress parser for sockseek's streamed stdout. sockseek is an
-# external tool (not ours to instrument) so this is a heuristic, not a
-# guarantee — falls back to leaving current/total alone (indeterminate) if a
-# line doesn't match any known shape.
-_DOWNLOAD_PROGRESS_RE = re.compile(
-    r'^\s*\[?(?P<idx>\d+)\s*/\s*(?P<tot>\d+)\]?|^\s*(?P<label>Succeeded|Downloaded|Failed|Skipped|Not found)\b',
+# sockseek's actual log format (confirmed against a live run):
+#   [core] Downloaded 14, Failed 11 of Total 28 (89.29 %)
+#   [003] SongJob: searching: Nickelback - Bones For The Crows
+#   [005] SongJob: downloading: SCATTERBRAIN - FAST LANE: <path>
+#   [006] SongJob: succeeded: Evanescence - Who Will You Follow: <path>
+#   [005] SongJob: failed [All downloads failed]: SCATTERBRAIN - FAST LANE
+_CORE_PROGRESS_RE = re.compile(
+    r'^\[core\]\s*Downloaded\s+(?P<downloaded>\d+),\s*Failed\s+(?P<failed>\d+)\s*of\s*Total\s+(?P<total>\d+)',
     re.IGNORECASE,
 )
+_SONG_STATUS_RE = re.compile(
+    r'^\[(?P<id>\d+)\]\s*SongJob:\s*(?P<action>searching|downloading|succeeded|failed)\b.*?:\s*(?P<track>[^:]+)',
+    re.IGNORECASE,
+)
+
+
 
 
 def _read_meta(playlist_dir: Path) -> dict:
@@ -203,21 +211,26 @@ def _stream_subprocess(job, args, cwd, extra_env=None, total_tracks=None):
         args, cwd=cwd, env=env,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1,
     )
-    completed = 0
     for line in proc.stdout:
         line = line.rstrip("\n")
         job.append_log(line)
-        job.message = line[:200] if line.strip() else job.message
 
-        m = _DOWNLOAD_PROGRESS_RE.match(line)
-        if m and total_tracks:
-            if m.group("idx") and m.group("tot"):
-                job.current = int(m.group("idx"))
-                job.total = int(m.group("tot"))
-            elif m.group("label"):
-                completed += 1
-                job.current = min(completed, total_tracks)
-                job.total = total_tracks
+        core_m = _CORE_PROGRESS_RE.match(line)
+        song_m = _SONG_STATUS_RE.match(line) if not core_m else None
+
+        if core_m and total_tracks:
+            downloaded = int(core_m.group("downloaded"))
+            failed = int(core_m.group("failed"))
+            job.current = min(downloaded + failed, total_tracks)
+            job.total = total_tracks
+            job.message = f"Downloaded {downloaded}, failed {failed} of {total_tracks}"
+        elif song_m:
+            action = song_m.group("action").lower()
+            track = song_m.group("track").strip()
+            job.upsert_track(song_m.group("id"), track, action)
+            job.message = f"{action.capitalize()}: {track}"
+        elif line.strip():
+            job.message = line[:200]
 
     proc.wait()
     return proc.returncode
