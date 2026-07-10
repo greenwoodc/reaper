@@ -15,8 +15,9 @@ reaper/
 │   └── <playlist_slug>/
 │       ├── found_tracks.json      ← tracks matched in Navidrome
 │       ├── missing_tracks.csv     ← tracks to download
-│       ├── download_log.txt       ← sldl output log
+│       ├── download_log.txt       ← sockseek output log
 │       └── not_found.txt          ← tracks Soulseek couldn't source
+├── Dockerfile                     ← builds sockseek image (pinned to release tag)
 ├── docker-compose.yml
 ├── config.yml                     ← Navidrome credentials & pipeline settings
 ├── 01_scan_navidrome.py
@@ -70,9 +71,21 @@ desperate = true
 
 > **Note:** `desperate = true` is required for reliable results, especially behind CGNAT. It searches by title only and filters by artist on results, which significantly improves hit rate.
 
-### 3 — Docker user permissions
+### 3 — Docker image
 
-The sldl container must write files as your user to avoid beets permission errors. Verify `docker-compose.yml` has:
+The pipeline builds its own sockseek image from the `Dockerfile` in the project root. The image is built automatically when you first run Phase 2, and rebuilt only when the `Dockerfile` changes.
+
+The `Dockerfile` clones sockseek pinned to a specific release tag. When upgrading sockseek, update the tag in the `Dockerfile` and run:
+
+```bash
+docker compose build
+```
+
+> **Background:** sockseek was formerly known as `sldl` and before that `slsk-batchdl`. The project has been renamed and restructured twice. Pinning to a release tag prevents upstream restructures from silently breaking the build between runs.
+
+### 4 — Docker user permissions
+
+The sockseek container must write files as your user to avoid beets permission errors. Verify `docker-compose.yml` has:
 
 ```yaml
 user: "1000:1000"
@@ -80,7 +93,7 @@ user: "1000:1000"
 
 Check your UID/GID with `id -u && id -g`. If not 1000:1000, update accordingly.
 
-### 4 — Beets config
+### 5 — Beets config
 
 Beets handles importing downloaded tracks into your library. Key settings in `~/.config/beets/config.yaml`:
 
@@ -118,7 +131,6 @@ plugins: fetchart duplicates
 #    apikey: your_acoustid_key
 #not needed when not using chroma
 
-
 match:
     strong_rec_thresh: 0.80
     medium_rec_thresh: 0.30
@@ -130,7 +142,7 @@ chroma:
     auto: yes
 ```
 
-### 5 — Script permissions
+### 6 — Script permissions
 
 ```bash
 chmod +x 02_download_missing.sh 02b_move_to_library.sh
@@ -146,8 +158,14 @@ chmod +x 02_download_missing.sh 02b_move_to_library.sh
         │  → found_tracks.json
         │  → playlists/<slug>/missing_tracks.csv
         ▼
+01b_cleanup_missing_csv.py
+        │  Normalises artist/title strings for Soulseek compatibility
+        │  Strips features, metadata parentheticals, diacritics, bad punctuation
+        │  → missing_tracks.csv (overwritten in-place)
+        │  (auto-invoked by Phase 2; can also be run standalone)
+        ▼
 02_download_missing.sh
-        │  Cleans CSV (01b), downloads via Soulseek (sldl Docker)
+        │  Cleans CSV (01b), downloads via Soulseek (sockseek Docker)
         │  → /mnt/4TBExt/Media/incoming/
         ▼
 02b_move_to_library.sh
@@ -185,13 +203,49 @@ Playlist : Hauraki Top 25
 ──────────────────────────────────────────────────────────────
 ```
 
+### Phase 1b — Clean missing CSV (optional manual run — runs automatically with Phase 2)
+
+```bash
+python3 01b_cleanup_missing_csv.py --playlist "Hauraki Top 25"
+```
+
+Normalises `missing_tracks.csv` in-place so Soulseek gets cleaner search strings. Phase 2 runs this automatically, but you can run it manually to preview the changes before downloading.
+
+**What it does — three passes per track:**
+
+1. **Structural extraction** — strips featured artists, backing band noise (`& The ...`), and metadata parentheticals from titles (remaster, deluxe, edition, live, year suffixes, feat. clauses). Uses word-boundary matching to avoid clipping legitimate parts of a title.
+2. **Unicode normalisation** — removes diacritics and accent marks (e.g. `é` → `e`) that P2P clients often struggle to match.
+3. **Punctuation stripping** — removes ellipses, brackets, quotes, hyphens, and other characters that break Soulseek search queries.
+
+The script prints a sample diff of every row that changed (up to 10):
+
+```
+Track [Rank 3]:
+  Artist: 'AC DC Tribute Band'              →  'AC DC Tribute Band'
+  Title:  'Don't Dream It's Over (Remastered 2016)'  →  'Don t Dream It s Over'
+```
+
+> **Note:** The original values are preserved internally during the run for display only — the CSV is overwritten with cleaned values. If you need to restore originals, re-run Phase 1.
+
+**Accepted arguments:**
+
+| Argument | Description |
+|---|---|
+| `--playlist "Name"` | Targets `playlists/<slug>/missing_tracks.csv` automatically |
+| `--csv path/to/file.csv` | Targets an arbitrary CSV path directly |
+| *(none)* | Falls back to `playlists/hauraki_top_25/missing_tracks.csv` |
+
+---
+
 ### Phase 2 — Download missing tracks
 
 ```bash
 ./02_download_missing.sh --playlist "Hauraki Top 25"
 ```
 
-Automatically runs Phase 1b cleanup on the CSV, then downloads missing tracks via Soulseek. Downloads land in `/mnt/4TBExt/Media/incoming/`.
+Automatically runs Phase 1b (`01b_cleanup_missing_csv.py`) to clean the CSV before searching, then downloads missing tracks via Soulseek. Downloads land in `/mnt/4TBExt/Media/incoming/`.
+
+The script runs `docker compose build` at the start of every run. This is fast when nothing has changed (Docker layer cache) and ensures the image is always in a known-good state.
 
 > **Do not** log into Soulseek locally while this script is running. The container holds the session exclusively. Wait for the script to finish and the 30-second cooldown to complete before logging in.
 
@@ -237,16 +291,33 @@ tmux new-session -d -s reaper './02_download_missing.sh --playlist "Hauraki Top 
 
 ---
 
+## Upgrading sockseek
+
+The `Dockerfile` pins sockseek to a specific release tag. To upgrade:
+
+1. Check the [sockseek releases page](https://github.com/fiso64/sockseek/releases) for the latest tag.
+2. Update the `--branch` value in the `Dockerfile`.
+3. Rebuild the image:
+
+```bash
+cd /opt/reaper
+docker compose build --no-cache
+```
+
+> **Note:** sockseek was previously named `sldl` and `slsk-batchdl`. GitHub redirects the old URLs to the current repo, but the project structure changed with each rename. Always pin to a release tag rather than `master` to avoid silent breakage between runs.
+
+---
+
 ## Troubleshooting
 
 **Soulseek finds nothing**
-Make sure `desperate = true` is set in `sldl.conf`. Without it, sldl searches by combined artist+title string which often returns zero results, especially behind CGNAT.
+Make sure `desperate = true` is set in `sldl.conf`. Without it, sockseek searches by combined artist+title string which often returns zero results, especially behind CGNAT.
 
 **Search rate limit hit mid-run**
 Reduce `searches-per-time` and `concurrent-searches` in `sldl.conf`. The pipeline will pause and resume automatically — this is normal behaviour.
 
 **Files not moving from incoming after beets import**
-Check file ownership — sldl must run as your user (`user: "1000:1000"` in docker-compose.yml). Files written as root cannot be moved by beets. Fix existing files with:
+Check file ownership — sockseek must run as your user (`user: "1000:1000"` in docker-compose.yml). Files written as root cannot be moved by beets. Fix existing files with:
 ```bash
 sudo chown -R chris:chris /mnt/4TBExt/Media/incoming/
 ```
@@ -262,14 +333,13 @@ rm -f ~/.config/beets/state.pickle
 Check that Navidrome's music folder path covers `/mnt/4TBExt/Media/Music`. Phase 3 triggers a rescan automatically — if tracks still don't appear, trigger a manual scan in Navidrome → Settings → Library → Scan now.
 
 **Bad artist tags in source CSV**
-Phase 1b cleans common issues automatically, but some require manual correction. Known examples:
-- `AC DC Tribute Band` → `AC/DC`
-- `BushidoSensei` → `Bush`
-
-Edit the CSV directly before running Phase 2.
+Phase 1b automatically handles most common issues: featured artist suffixes, `& The ...` backing band noise, collab separators (`;`, `,`, `feat.`, `with`), and unicode/punctuation hazards. For values that survive cleaning unchanged — typically where the source CSV itself has a genuinely wrong artist name — manual correction is still needed before running Phase 2. Edit `missing_tracks.csv` directly, or fix the source CSV and re-run Phase 1.
 
 **Tracks not found on Soulseek**
 Check `playlists/<slug>/not_found.txt` after a run. Options for manual sourcing:
 - **yt-dlp**: `yt-dlp -x --audio-format flac "ytsearch1:Artist - Title"`
 - **Bandcamp**: good for NZ/indie artists
 - **CD ripping**: if you own the album
+
+**Docker build fails with `Project file does not exist`**
+sockseek has been renamed and restructured twice (formerly `slsk-batchdl` → `sldl` → `sockseek`). If the build breaks after a period of inactivity, check the [sockseek releases page](https://github.com/fiso64/sockseek/releases) and update the `--branch` tag and `.csproj` path in the `Dockerfile` to match the current repo structure, then rebuild with `docker compose build --no-cache`.

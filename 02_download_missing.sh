@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Reaper — Phase 2: Download missing tracks via slsk-batchdl (Docker)
+# Reaper — Phase 2: Download missing tracks via sockseek (Docker)
 #
 # Usage:
 #   ./02_download_missing.sh --playlist "Hauraki Top 25"
@@ -40,16 +40,18 @@ SLUG=$(slugify "$PLAYLIST")
 PLAYLIST_DIR="$SCRIPT_DIR/playlists/$SLUG"
 CSV_PATH="$PLAYLIST_DIR/missing_tracks.csv"
 
-# ── STEP 1: Build from custom Dockerfile with .NET 10 (master branch) ──
-if ! docker image inspect slsk-batchdl &>/dev/null; then
-    echo "► Building slsk-batchdl from master (with excluded phrase filter fix)..."
-    docker build -t slsk-batchdl .
-    echo "✓ Image built."
-else
-    echo "✓ slsk-batchdl image already exists."
-fi
+# ── STEP 1: Build image via docker compose (idempotent, cache-aware) ─────────
+echo "► Ensuring slsk-batchdl image is current..."
+cd "$SCRIPT_DIR"
+docker compose build --quiet
+echo "✓ Image ready."
 
 # ── STEP 2: Check prerequisites ──────────────────────────────────────────────
+if ! command -v python3 &>/dev/null; then
+    echo "❌  python3 not found in PATH. Required for Phase 1b cleanup."
+    exit 1
+fi
+
 if [ ! -f "$SCRIPT_DIR/config/sldl.conf" ]; then
     echo "❌  config/sldl.conf not found."
     exit 1
@@ -70,7 +72,7 @@ if [ ! -f "$CSV_PATH" ]; then
     exit 1
 fi
 
-TRACK_COUNT=$(tail -n +2 "$CSV_PATH" | wc -l | tr -d ' ')
+TRACK_COUNT=$(tail -n +2 "$CSV_PATH" | wc -l)
 if [ "$TRACK_COUNT" -eq 0 ]; then
     echo "🎉 Zero missing tracks found! Your library is fully up to date for this playlist."
     exit 0
@@ -94,13 +96,22 @@ MUSIC_UID=$(stat -c '%u' /mnt/4TBExt/Media/Music)
 MUSIC_GID=$(stat -c '%g' /mnt/4TBExt/Media/Music)
 
 if [ "$MUSIC_UID" != "1000" ] || [ "$MUSIC_GID" != "1000" ]; then
-    echo "⚠  Music folder owned by UID=$MUSIC_UID GID=$MUSIC_GID"
-    echo "   Ensure PUID/PGID matches in docker-compose.yml before running if files fail to write."
+    echo ""
+    echo "⚠️  WARNING: Music folder owned by UID=$MUSIC_UID GID=$MUSIC_GID (expected 1000:1000)."
+    echo "   Downloaded files may be unreadable by beets in Phase 2b."
+    echo "   Update 'user:' in docker-compose.yml to match, or fix with:"
+    echo "     sudo chown -R \$(id -u):\$(id -g) /mnt/4TBExt/Media/incoming/"
+    echo ""
+    read -r -p "   Continue anyway? [y/N] " _confirm
+    if [[ ! "$_confirm" =~ ^[Yy]$ ]]; then
+        echo "Aborted."
+        exit 1
+    fi
 fi
 
-# ── STEP 5: Run sldl inside the container ────────────────────────────────────
+# ── STEP 5: Run sockseek inside the container ─────────────────────────────────
 echo ""
-echo "► Running sldl (output will stream below)..."
+echo "► Running sockseek (output will stream below)..."
 echo "  Press Ctrl+C to pause — re-running this script will resume safely."
 echo "──────────────────────────────────────────────────────────────"
 
@@ -125,14 +136,14 @@ if [ -f "$CONTAINER_CSV_STAGING" ]; then
     rm "$CONTAINER_CSV_STAGING"
 fi
 
-# If slsk-batchdl drops an un-downloadable list file, catch it and put it in the playlist directory
-if [ -f "$SCRIPT_DIR/config/not_found.txt" ] && [ -s "$SCRIPT_DIR/config/not_found.txt" ]; then
+# If sockseek drops a not_found list into config/, move it to the playlist directory
+if [ -f "$SCRIPT_DIR/config/not_found.txt" ]; then
     mv "$SCRIPT_DIR/config/not_found.txt" "$PLAYLIST_DIR/not_found.txt"
 fi
 
 if [ -f "$PLAYLIST_DIR/not_found.txt" ] && [ -s "$PLAYLIST_DIR/not_found.txt" ]; then
-    NOT_FOUND=$(wc -l < "$PLAYLIST_DIR/not_found.txt" | tr -d ' ')
-    echo "  ⚠  $NOT_FOUND tracks not found on Soulseek — see playlists/$SLUG/not_found.txt"
+    NOT_FOUND=$(wc -l < "$PLAYLIST_DIR/not_found.txt")
+    echo "  ⚠  $NOT_FOUND track(s) not found on Soulseek — see playlists/$SLUG/not_found.txt"
 fi
 
 # ── STEP 6: Container Safety Exit Cleanup ────────────────────────────────────
@@ -140,7 +151,7 @@ echo ""
 echo "► Cleaning up Docker container..."
 docker compose down
 
-if docker container inspect sldl >/dev/null 2>&1 2>/dev/null; then
+if docker container inspect sldl >/dev/null 2>&1; then
     echo "⚠️  WARNING: Container still running! Forcing cleanup..."
     docker compose kill sldl
 fi
@@ -151,4 +162,5 @@ sleep 30
 
 echo ""
 echo "Safe to log into Soulseek now."
-echo "Next: python3 03_rescan_and_merge.py --playlist \"$PLAYLIST\""
+echo "Next: ./02b_move_to_library.sh"
+echo "Then: python3 03_rescan_and_merge.py --playlist \"$PLAYLIST\""
