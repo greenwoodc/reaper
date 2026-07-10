@@ -7,6 +7,7 @@ process does, which matches how the rest of Reaper already treats state
 """
 
 import threading
+import time
 import traceback
 import uuid
 from dataclasses import dataclass, field
@@ -32,9 +33,13 @@ class Job:
     # frontend can order by recency without relying on dict ordering.
     tracks: dict = field(default_factory=dict)
     _track_seq: int = field(default=0, repr=False)
-    # Unix ms timestamp when a Soulseek search rate limit is expected to
-    # clear, or None when not currently rate-limited. The frontend ticks
-    # this down locally rather than polling every second for it.
+    # Unix seconds (this process's own clock) when a Soulseek search rate
+    # limit is expected to clear, or None when not currently rate-limited.
+    # Never exposed directly — see to_public_dict(), which converts it to a
+    # relative "seconds remaining" figure computed fresh on every poll, so
+    # the frontend never has to compare its clock against the backend's
+    # (comparing raw timestamps across two machines with unsynced clocks is
+    # exactly what made the countdown show inconsistently).
     rate_limit_until: Optional[float] = None
 
     def append_log(self, line: str, max_lines: int = 500) -> None:
@@ -52,6 +57,12 @@ class Job:
         }
 
     def to_public_dict(self) -> dict:
+        rate_limit_seconds = None
+        if self.rate_limit_until is not None:
+            remaining = self.rate_limit_until - time.time()
+            if remaining > 0:
+                rate_limit_seconds = round(remaining)
+
         return {
             "id": self.id,
             "kind": self.kind,
@@ -65,7 +76,7 @@ class Job:
             "result": self.result,
             "error": self.error,
             "tracks": sorted(self.tracks.values(), key=lambda t: t["seq"]),
-            "rate_limit_until": self.rate_limit_until,
+            "rate_limit_seconds": rate_limit_seconds,
         }
 
 

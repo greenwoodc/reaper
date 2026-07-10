@@ -242,7 +242,7 @@ def _stream_subprocess(job, args, cwd, extra_env=None, total_tracks=None):
             job.rate_limit_until = None
         elif rate_limit_m:
             seconds = int(rate_limit_m.group("seconds"))
-            job.rate_limit_until = (time.time() + seconds) * 1000
+            job.rate_limit_until = time.time() + seconds
             job.message = f"Soulseek search rate limit hit — resuming in {seconds}s"
         elif line.strip():
             job.message = line[:200]
