@@ -10,6 +10,7 @@ import json
 import os
 import re
 import subprocess
+import time
 from pathlib import Path
 
 from flask import Blueprint, jsonify, request
@@ -43,6 +44,11 @@ _CORE_PROGRESS_RE = re.compile(
 )
 _SONG_STATUS_RE = re.compile(
     r'^\[(?P<id>\d+)\]\s*SongJob:\s*(?P<action>searching|downloading|succeeded|failed)\b.*?:\s*(?P<track>[^:]+)',
+    re.IGNORECASE,
+)
+#   Search rate limit reached, resuming in 100s
+_RATE_LIMIT_RE = re.compile(
+    r'^Search rate limit reached,\s*resuming in\s*(?P<seconds>\d+)s',
     re.IGNORECASE,
 )
 
@@ -217,20 +223,34 @@ def _stream_subprocess(job, args, cwd, extra_env=None, total_tracks=None):
 
         core_m = _CORE_PROGRESS_RE.match(line)
         song_m = _SONG_STATUS_RE.match(line) if not core_m else None
+        rate_limit_m = _RATE_LIMIT_RE.match(line) if not core_m and not song_m else None
 
         if core_m and total_tracks:
+            # sockseek's own summary line — fires infrequently (not once per
+            # track), so it's only used for the message text. current/total
+            # below are derived from per-track state instead, which updates
+            # on every SongJob line and stays in sync with the DownloadFeed.
             downloaded = int(core_m.group("downloaded"))
             failed = int(core_m.group("failed"))
-            job.current = min(downloaded + failed, total_tracks)
-            job.total = total_tracks
             job.message = f"Downloaded {downloaded}, failed {failed} of {total_tracks}"
+            job.rate_limit_until = None
         elif song_m:
             action = song_m.group("action").lower()
             track = song_m.group("track").strip()
             job.upsert_track(song_m.group("id"), track, action)
             job.message = f"{action.capitalize()}: {track}"
+            job.rate_limit_until = None
+        elif rate_limit_m:
+            seconds = int(rate_limit_m.group("seconds"))
+            job.rate_limit_until = (time.time() + seconds) * 1000
+            job.message = f"Soulseek search rate limit hit — resuming in {seconds}s"
         elif line.strip():
             job.message = line[:200]
+
+        if total_tracks:
+            completed = sum(1 for t in job.tracks.values() if t["status"] in ("succeeded", "failed"))
+            job.current = min(completed, total_tracks)
+            job.total = total_tracks
 
     proc.wait()
     return proc.returncode

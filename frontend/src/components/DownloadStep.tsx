@@ -7,6 +7,7 @@ import { useJobLog } from "@/lib/useJobLog";
 import type { CleanupPreview } from "@/lib/types";
 import RadialProgress from "./RadialProgress";
 import DownloadFeed from "./DownloadFeed";
+import RateLimitCountdown from "./RateLimitCountdown";
 
 interface DownloadStepProps {
   slug: string;
@@ -20,6 +21,27 @@ const PHASE_LABELS: Record<string, string> = {
   uid_gid_check: "Waiting for confirmation...",
 };
 
+function LogPanel({ log, logEndRef }: { log: string[]; logEndRef: React.RefObject<HTMLDivElement | null> }) {
+  if (log.length === 0) {
+    return (
+      <p className="text-xs text-[var(--color-muted)]">
+        No output yet — this is normal while Docker builds the sockseek image on first run,
+        which can take several minutes with no visible progress.
+      </p>
+    );
+  }
+  return (
+    <div className="max-h-64 overflow-y-auto font-mono text-[11px] leading-relaxed text-[var(--color-muted)]">
+      {log.map((line, i) => (
+        <div key={i} className="whitespace-pre-wrap">
+          {line}
+        </div>
+      ))}
+      <div ref={logEndRef} />
+    </div>
+  );
+}
+
 export default function DownloadStep({ slug, onDone }: DownloadStepProps) {
   const [preview, setPreview] = useState<CleanupPreview | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
@@ -29,8 +51,8 @@ export default function DownloadStep({ slug, onDone }: DownloadStepProps) {
   const logEndRef = useRef<HTMLDivElement>(null);
 
   const job = useJob(jobId);
-  const isActive = job?.status === "running" || job?.status === "queued";
-  const log = useJobLog(jobId, showLog && isActive);
+  const canShowLog = job?.status === "running" || job?.status === "queued" || job?.status === "error";
+  const log = useJobLog(jobId, showLog && canShowLog);
 
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ block: "end" });
@@ -111,7 +133,7 @@ export default function DownloadStep({ slug, onDone }: DownloadStepProps) {
 
   if (job?.status === "error") {
     return (
-      <div className="flex flex-col items-center gap-4 text-center">
+      <div className="flex w-full max-w-lg flex-col items-center gap-4 text-center">
         <p className="text-[var(--color-error)]">{job.error}</p>
         <button
           type="button"
@@ -120,6 +142,18 @@ export default function DownloadStep({ slug, onDone }: DownloadStepProps) {
         >
           Try again
         </button>
+        <button
+          type="button"
+          onClick={() => setShowLog((v) => !v)}
+          className="text-xs text-[var(--color-accent)] hover:opacity-80"
+        >
+          {showLog ? "Hide" : "Show"} raw log
+        </button>
+        {showLog && (
+          <div className="w-full rounded-md border border-[var(--color-border)] bg-black/40 p-3 text-left">
+            <LogPanel log={log} logEndRef={logEndRef} />
+          </div>
+        )}
       </div>
     );
   }
@@ -137,6 +171,8 @@ export default function DownloadStep({ slug, onDone }: DownloadStepProps) {
           {PHASE_LABELS[job.phase] || job.message || "Working..."}
         </p>
 
+        {job.rate_limit_until && <RateLimitCountdown resumeAt={job.rate_limit_until} />}
+
         {job.phase === "downloading" && <DownloadFeed tracks={job.tracks} />}
 
         <button
@@ -148,21 +184,7 @@ export default function DownloadStep({ slug, onDone }: DownloadStepProps) {
         </button>
         {showLog && (
           <div className="w-full rounded-md border border-[var(--color-border)] bg-black/40 p-3">
-            {log.length === 0 ? (
-              <p className="text-xs text-[var(--color-muted)]">
-                No output yet — this is normal while Docker builds the sockseek image on first
-                run, which can take several minutes with no visible progress.
-              </p>
-            ) : (
-              <div className="max-h-64 overflow-y-auto font-mono text-[11px] leading-relaxed text-[var(--color-muted)]">
-                {log.map((line, i) => (
-                  <div key={i} className="whitespace-pre-wrap">
-                    {line}
-                  </div>
-                ))}
-                <div ref={logEndRef} />
-              </div>
-            )}
+            <LogPanel log={log} logEndRef={logEndRef} />
           </div>
         )}
       </div>

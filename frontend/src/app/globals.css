@@ -40,6 +40,10 @@
 
 html {
   color-scheme: dark;
+  /* Scale the whole UI up uniformly — Tailwind's text sizes, spacing, and
+     most max-widths are all rem-based, so bumping the root font-size scales
+     everything proportionally instead of hand-editing every text-* class. */
+  font-size: 120%;
 }
 
 body {
