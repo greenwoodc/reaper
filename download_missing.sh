@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Reaper — Phase 2: Download missing tracks via sockseek (Docker)
+# Reaper — download missing tracks via sockseek (Docker). Invoked by the
+# webapp backend (backend/routes.py); also runnable directly.
 #
 # Usage:
-#   ./02_download_missing.sh --playlist "Hauraki Top 25"
+#   ./download_missing.sh --playlist "Hauraki Top 25"
 #
 
 set -euo pipefail
@@ -60,7 +61,7 @@ echo "✓ Image ready."
 
 # ── STEP 2: Check prerequisites ──────────────────────────────────────────────
 if ! command -v python3 &>/dev/null; then
-    echo "❌  python3 not found in PATH. Required for Phase 1b cleanup."
+    echo "❌  python3 not found in PATH. Required for search-term cleanup."
     exit 1
 fi
 
@@ -74,15 +75,21 @@ if grep -q "your_soulseek_username" "$SCRIPT_DIR/config/sldl.conf"; then
     exit 1
 fi
 
-# ── STEP 3: Run Phase 1b String Cleanup dynamically ─────────────────────────
-echo ""
-echo "► Launching cleanup phase on target playlist directory..."
-python3 "$SCRIPT_DIR/01b_cleanup_missing_csv.py" --playlist "$PLAYLIST"
-
+# ── STEP 3: Clean up search terms for Soulseek ───────────────────────────────
+# The webapp already runs this in-process (core.cleanup) before invoking this
+# script; re-running it here is a harmless no-op for that path and is what
+# makes this script self-sufficient when run directly from a terminal.
 if [ ! -f "$CSV_PATH" ]; then
     echo "❌  Target CSV not found at: $CSV_PATH"
     exit 1
 fi
+
+echo ""
+echo "► Cleaning up search terms for Soulseek..."
+python3 -c "
+from core.cleanup import clean_missing_csv
+clean_missing_csv('$CSV_PATH', apply=True)
+"
 
 TRACK_COUNT=$(tail -n +2 "$CSV_PATH" | wc -l)
 if [ "$TRACK_COUNT" -eq 0 ]; then
@@ -191,5 +198,4 @@ sleep 30
 
 echo ""
 echo "Safe to log into Soulseek now."
-echo "Next: ./02b_move_to_library.sh"
-echo "Then: python3 03_rescan_and_merge.py --playlist \"$PLAYLIST\""
+echo "Next: ./move_to_library.sh"

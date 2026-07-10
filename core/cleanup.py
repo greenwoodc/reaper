@@ -1,8 +1,8 @@
-"""Reaper — Phase 1b core: clean missing_tracks.csv for Soulseek search hits.
+"""Reaper — clean missing_tracks.csv for better Soulseek search hits.
 
-Extracted from 01b_cleanup_missing_csv.py. clean_missing_csv() always returns
-the full diff (for the Flask preview endpoint); apply=True additionally
-overwrites csv_path in place, matching the original script's only behavior.
+clean_missing_csv() always returns the full diff (used by the webapp's
+cleanup-preview endpoint); apply=True additionally overwrites csv_path in
+place (used when actually starting a download).
 """
 
 import csv
@@ -10,20 +10,6 @@ import re
 import shutil
 import unicodedata
 from pathlib import Path
-
-from core.config import slugify
-
-
-def resolve_missing_csv_path(csv_arg: str | None, playlist_arg: str | None) -> Path:
-    if csv_arg:
-        return Path(csv_arg)
-    if playlist_arg:
-        slug = slugify(playlist_arg)
-        return Path("playlists") / slug / "missing_tracks.csv"
-    default = Path("playlists/hauraki_top_25/missing_tracks.csv")
-    if not default.exists():
-        default = Path("config/missing_tracks.csv")
-    return default
 
 
 def simplify_text(s: str) -> str:

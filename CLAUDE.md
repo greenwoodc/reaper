@@ -4,52 +4,57 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Reaper is a 4-phase pipeline that takes an Exportify CSV (a Spotify playlist export), matches each track against a Navidrome library over the Subsonic API, downloads anything missing via Soulseek (through a Dockerized `sockseek`/`sldl` binary), imports downloads with `beets`, then creates/updates the playlist in Navidrome. It's a personal automation tool, not a service — there's no test suite, no CI, and no package manifest (stdlib + PyYAML only).
+Reaper takes an Exportify CSV (a Spotify playlist export), matches each track against a Navidrome library over the Subsonic API, downloads anything missing via Soulseek (through a Dockerized `sockseek`/`sldl` binary), imports downloads with `beets`, then creates/updates the playlist in Navidrome. It's a personal automation tool for a single user on a trusted (Tailscale/LAN) network — no auth, no test suite, no CI.
 
-A Next.js frontend is planned as a new addition on top of this pipeline — see "Frontend (planned)" below.
+It used to be a set of standalone numbered CLI scripts (`01_scan_navidrome.py`, `02_download_missing.sh`, etc.). That CLI layer has been retired — the webapp (`frontend/` + `backend/`) is now the only way this pipeline is run. The shared matching/scan/rescan/playlist logic that used to live in those scripts now lives in `core/`, imported directly (in-process) by the Flask backend.
 
-## Commands
-
-```bash
-python3 01_scan_navidrome.py --csv path/to/export.csv [--name "Name"] [--rank-col Rank] [--dry-run]
-python3 01b_cleanup_missing_csv.py --playlist "Name"      # or --csv path/to/missing_tracks.csv
-./02_download_missing.sh --playlist "Name"                # runs 01b automatically, then Docker sockseek
-./02b_move_to_library.sh                                  # beets import of /mnt/4TBExt/Media/incoming
-python3 03_rescan_and_merge.py --playlist "Name"
-python3 04_create_playlist.py --playlist "Name" [--title "Display Name"]
-```
-
-There is no lint/test/build step — verify changes by running the relevant phase against a real (or `--dry-run`) config.
-
-## Architecture
-
-**Per-playlist state lives in `playlists/<slug>/`** (slug = lowercased, non-alphanumerics → `_`), not in the repo root. Each phase reads/writes this directory:
-- `found_tracks.json` — tracks matched in Navidrome, each carrying the Navidrome song id (`nd_id`) plus original CSV metadata and optional `rank`
-- `missing_tracks.csv` — tracks still to source, columns `artist,title,album[,rank]`
-- `download_log.txt`, `not_found.txt` — produced during Phase 2
-
-**Matching logic is duplicated, not shared**, between `01_scan_navidrome.py` and `03_rescan_and_merge.py`: `normalise()`, `fuzzy()`, and `score_song()` are copy-pasted identically in both files (Phase 3's docstring says it must match Phase 1 "precisely"). If you change matching behavior, update both files or they will silently diverge. The scoring formula is `title_score * 0.60 + artist_score * 0.40` with several hardcoded boosts (e.g. a `shihad`/`pacifier` band-alias special case, a "various artists" title-embeds-artist case).
-
-**Config precedence**: all phases call a local `load_config()` that reads `config.yml` (gitignored, real credentials live there) merged over an in-file `DEFAULTS` dict — never assume a key is present without checking the `DEFAULTS` block at the top of the script. Auth against Navidrome is Subsonic-style: `md5(password + salt)` with a hardcoded salt (`"reaper"`).
-
-**Phase 1b (`01b_cleanup_missing_csv.py`) rewrites `missing_tracks.csv` in place**, replacing artist/title with Soulseek-friendly versions (strips `feat.`/`&`/backing-band noise, parenthetical remaster/live/year metadata, diacritics, punctuation that breaks P2P search). Original values are only kept transiently for the diff preview printed to stdout — not persisted. Phase 2 always runs this before downloading; running it standalone lets you preview the diff first.
-
-**Phase 2 (`02_download_missing.sh`) is a bash orchestrator**, not a thin wrapper: it builds the Docker image, validates `config/sldl.conf` is filled in, runs Phase 1b, stages the CSV into `config/active_search.csv` (the only path the Docker volume mount exposes to the container), runs `sockseek` via `docker compose run`, then tears the container down with an explicit 30s cooldown before it's safe to log into Soulseek locally again (the container holds an exclusive session). Hardcoded paths (`/mnt/4TBExt/Media/...`) assume the current host layout.
-
-**`sockseek` naming churn**: the upstream project has been renamed twice (`slsk-batchdl` → `sldl` → `sockseek`). The `Dockerfile` clones a pinned release tag rather than `master` specifically to survive this — when upgrading, update the `--branch` tag and the `.csproj` path together.
-
-**Rank/order handling**: `rank` is optional throughout (absent when `--rank-col` isn't passed to Phase 1). Phase 4's playlist ordering (`playlist_order: asc|desc` in `config.yml`) and its coverage report only make sense when ranks are dense 1..N integers (e.g. a countdown-style playlist) — sparse or absent ranks make the "missing ranks" report meaningless.
-
-## Secrets
-
-`config.yml`, `config/sldl.conf`, and `github_token.txt` hold live credentials and are gitignored — never commit them, and be careful not to echo their contents into logs or commit messages. `config/sldl.conf.example` is the checked-in placeholder template — copy it to `config/sldl.conf` and fill in real values for first-time setup.
-
-## Frontend
-
-`frontend/` is a Next.js app (App Router, TypeScript, Tailwind) scaffolded via `create-next-app`, meant to sit in front of this pipeline (e.g. triggering phases, viewing playlist/match status). It currently has no connection to the Python pipeline — that integration (direct subprocess invocation vs. a thin API layer) is still to be designed.
+## Running it
 
 ```bash
-cd frontend && npm run dev      # http://localhost:3000 (or next available port)
+# Backend (Flask API)
+python3 backend/app.py          # binds 0.0.0.0:5001 — see backend/app.py for the AirPlay/port-5000 gotcha on macOS
+
+# Frontend (Next.js)
+cd frontend && npm run dev      # needs NEXT_PUBLIC_API_URL if the backend isn't on localhost:5001
 cd frontend && npm run build
 cd frontend && npm run lint
 ```
+
+There is no test suite — verify backend changes by running the Flask app and exercising the relevant endpoint (curl or the UI); verify frontend changes with `npm run lint && npm run build` plus a manual click-through.
+
+## Architecture
+
+**Three layers:**
+- **`core/`** — the actual pipeline logic (config loading, Subsonic API client, fuzzy matching, scan/rescan/cleanup/create-playlist). No printing, no CLI concerns — every function takes an optional `on_progress` callback and returns a structured result object. This is the only place matching/scan/rescan logic lives.
+- **`backend/`** — Flask API (`app.py`, `routes.py`, `jobs.py`) that drives `core/` directly for scan, cleanup-preview, rescan, and playlist creation (in-process function calls, not subprocess). Background work runs on a `threading.Thread` per job via `backend/jobs.py`'s in-memory `JobManager` — job state is lost if the process restarts, and there's no lock preventing two download jobs from running concurrently (Soulseek only supports one session at a time — don't start two downloads at once).
+- **`frontend/`** — Next.js (App Router, TypeScript, Tailwind) wizard UI. Polls `/api/jobs/<id>` every second for progress rather than using websockets/SSE.
+
+**`download_missing.sh` and `move_to_library.sh` are the one place bash still does real work** — Docker/Soulseek orchestration and the `beet import` call. The backend invokes them via `subprocess.Popen`, tailing stdout for progress (see the log-parsing regexes in `backend/routes.py` — they're matched against `sockseek`'s actual log format, not guessed). Two things that bit us building this, both now fixed but worth knowing if they resurface:
+  - `docker compose run ... | tee` block-buffers when piped to a non-tty — needs `stdbuf -oL` on `tee` or output silently sits in a buffer for minutes.
+  - `sockseek` exits non-zero whenever *any* individual track fails (completely normal for Soulseek P2P) — under `set -e` that aborts the whole script before cleanup/cooldown run. `download_missing.sh` captures the real exit code via `${PIPESTATUS[0]}` inside a `set +e`/`set -e` bracket instead of letting it propagate.
+
+**Per-playlist state lives in `playlists/<slug>/`** (slug = lowercased, non-alphanumerics → `_`, gitignored):
+- `found_tracks.json` — tracks matched in Navidrome, each carrying the Navidrome song id (`nd_id`) plus original CSV metadata and optional `rank`
+- `missing_tracks.csv` — tracks still to source, columns `artist,title,album[,rank]`
+- `meta.json` — `{"playlist_name": "..."}`, written by the backend on scan so the dashboard can resume a playlist and show its real display name (the CSV filename/slug alone can't recover this)
+- `download_log.txt`, `not_found.txt` — produced by `download_missing.sh`
+
+**Matching** (`core/matching.py`): `normalise()`, `fuzzy()`, `score_song()`, `search_navidrome()` — single source of truth, used by both scan and rescan. Scoring formula is `title_score * 0.60 + artist_score * 0.40` with hardcoded boosts (a `shihad`/`pacifier` band-alias special case, a "various artists" title-embeds-artist case). This used to be duplicated between two scripts and had already silently drifted (different tie-breaking behavior) before being consolidated — if you touch this file, that's the whole reason it's one file now.
+
+**Config precedence**: `core/config.py`'s `load_config()` reads `config.yml` (gitignored, real credentials) merged over a `DEFAULTS` dict. Auth against Navidrome is Subsonic-style: `md5(password + salt)` with a hardcoded salt (`"reaper"`). The webapp's Settings page (`core/settings.py`) reads/writes `config.yml` and `config/sldl.conf` directly — it only touches the specific keys it manages and preserves everything else (comments in `sldl.conf`, unmanaged keys) untouched on save, except `config.yml` itself loses its comments on save (plain `yaml.safe_dump`, not comment-preserving).
+
+**Media root**: `download_missing.sh`/`move_to_library.sh` derive `MUSIC_DIR`/`INCOMING_DIR` from `REAPER_MEDIA_ROOT` in a gitignored `.env` file (default `/mnt/4TBExt/Media` if unset), which also feeds `docker-compose.yml`'s volume mount (`${REAPER_MEDIA_ROOT:-/mnt/4TBExt/Media}:/data`). Settable via the webapp's Settings page or by hand-editing `.env`.
+
+**`sockseek` naming churn**: the upstream project has been renamed twice (`slsk-batchdl` → `sldl` → `sockseek`). The `Dockerfile` clones a pinned release tag rather than `master` specifically to survive this — when upgrading, update the `--branch` tag and the `.csproj` path together.
+
+**Rank/order handling**: `rank` is optional throughout (absent when no rank column is picked during upload). Playlist ordering (`playlist_order: asc|desc` in `config.yml`, editable via Settings) and the coverage report only make sense when ranks are dense 1..N integers (e.g. a countdown-style playlist) — sparse or absent ranks make the "missing ranks" report meaningless.
+
+**Navidrome playlists are marked public automatically** (`core/create_playlist.py`'s `set_playlist_public`) — Navidrome defaults new playlists to private, which used to require a manual per-playlist toggle.
+
+## Secrets
+
+`config.yml`, `config/sldl.conf`, `.env`, and `github_token.txt` hold live credentials and are gitignored — never commit them. `config/sldl.conf.example` is the checked-in placeholder template.
+
+## Git workflow
+
+This repo hit the classic squash-merge trap repeatedly (squash-merging a PR breaks the branch's ancestry link to `main`, so continuing to commit on that same branch and merging again produces phantom conflicts on files that didn't actually change). Fixed at the repo level: squash merging is disabled and branches auto-delete on merge — always branch fresh off `origin/main` for new work rather than reusing an already-merged branch.

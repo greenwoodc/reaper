@@ -40,7 +40,6 @@ export interface ScanResult {
   playlist_name: string;
   found_count: number;
   missing_count: number;
-  dry_run: boolean;
 }
 
 export interface DownloadResult {
