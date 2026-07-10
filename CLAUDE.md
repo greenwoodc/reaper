@@ -47,6 +47,13 @@ There is no test suite — verify backend changes by running the Flask app and e
 
 **`sockseek` naming churn**: the upstream project has been renamed twice (`slsk-batchdl` → `sldl` → `sockseek`). The `Dockerfile` clones a pinned release tag rather than `master` specifically to survive this — when upgrading, update the `--branch` tag and the `.csproj` path together.
 
+**Dependency pinning, and where it's deliberately loose**:
+- `Dockerfile` pins sockseek to an exact release tag (currently `v3.0.4`) — this is load-bearing, not cosmetic: `backend/routes.py`'s progress-parsing regexes are matched against that specific version's log format, and an unpinned `master` clone would silently pick up upstream changes on every `docker compose build --no-cache`.
+- `deploy/setup_frontend.sh` pins Node to an exact patch (`NODE_VERSION="20.20.2"`), not just "20" — `nvm install 20` alone re-resolves to whatever the latest 20.x patch is at run time.
+- `frontend/package-lock.json` is committed and `setup_frontend.sh` uses `npm ci` (not `npm install`) — exact dependency versions, not just the `^`-ranges in `package.json`.
+- `requirements.txt`/`backend/requirements.txt` use exact `==` pins already.
+- Deliberately *not* pinned: the `.NET` base images in `Dockerfile` (`mcr.microsoft.com/dotnet/sdk:10.0`/`aspnet:10.0`, major.minor only) — official Microsoft images, patch-level updates within a minor version are expected to be safe, and pinning to a digest would mean manually chasing security patches.
+
 **Rank/order handling**: `rank` is optional throughout (absent when no rank column is picked during upload). Playlist ordering (`playlist_order: asc|desc` in `config.yml`, editable via Settings) and the coverage report only make sense when ranks are dense 1..N integers (e.g. a countdown-style playlist) — sparse or absent ranks make the "missing ranks" report meaningless.
 
 **Navidrome playlists are marked public automatically** (`core/create_playlist.py`'s `set_playlist_public`) — Navidrome defaults new playlists to private, which used to require a manual per-playlist toggle.
