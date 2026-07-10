@@ -1,3 +1,5 @@
+# Build from sockseek master branch (formerly slsk-batchdl/sldl
+
 # Build from sockseek master branch (formerly slsk-batchdl/sldl)
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS builder
 WORKDIR /build
