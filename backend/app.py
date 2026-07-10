@@ -24,9 +24,21 @@ sys.path.insert(0, str(REPO_ROOT))
 from backend.routes import api_bp  # noqa: E402  (must follow chdir/sys.path setup)
 
 # Next dev picks the next free port whenever 3000 is taken (common with other
-# projects running locally), so allow any localhost/127.0.0.1 port rather than
-# hardcoding one — this is a local-only personal tool, not exposed publicly.
-FRONTEND_ORIGIN_REGEX = r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
+# projects running locally), so allow any port rather than hardcoding one —
+# this is a local-only personal tool, not exposed publicly. Beyond
+# localhost/127.0.0.1 (running the frontend on your own machine), also allow
+# private LAN ranges and Tailscale's CGNAT range (100.64.0.0/10) since the
+# frontend now also runs on the homelab server, reached over Tailscale from
+# other devices.
+FRONTEND_ORIGIN_REGEX = (
+    r"^https?://("
+    r"localhost|127\.0\.0\.1"
+    r"|10(?:\.\d{1,3}){3}"
+    r"|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2}"
+    r"|192\.168(?:\.\d{1,3}){2}"
+    r"|100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])(?:\.\d{1,3}){2}"
+    r")(:\d+)?$"
+)
 
 
 def create_app() -> Flask:
