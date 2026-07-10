@@ -27,11 +27,25 @@ class Job:
     result: Optional[dict] = None
     error: Optional[str] = None
     log: list = field(default_factory=list)
+    # Per-track download status, keyed by sockseek's own SongJob id (e.g. "003"),
+    # for the live download feed UI. seq is an insertion/update counter so the
+    # frontend can order by recency without relying on dict ordering.
+    tracks: dict = field(default_factory=dict)
+    _track_seq: int = field(default=0, repr=False)
 
     def append_log(self, line: str, max_lines: int = 500) -> None:
         self.log.append(line)
         if len(self.log) > max_lines:
             del self.log[0]
+
+    def upsert_track(self, track_id: str, track: str, status: str) -> None:
+        self._track_seq += 1
+        self.tracks[track_id] = {
+            "id": track_id,
+            "track": track,
+            "status": status,
+            "seq": self._track_seq,
+        }
 
     def to_public_dict(self) -> dict:
         return {
@@ -46,6 +60,7 @@ class Job:
             "message": self.message,
             "result": self.result,
             "error": self.error,
+            "tracks": sorted(self.tracks.values(), key=lambda t: t["seq"]),
         }
 
 

@@ -140,7 +140,7 @@ docker compose run --rm --no-deps sldl \
     --artist-col "artist" \
     --title-col  "title" \
     --max-retries 1 \
-    2>&1 | tee "$PLAYLIST_DIR/download_log.txt"
+    2>&1 | stdbuf -oL tee "$PLAYLIST_DIR/download_log.txt"
 
 echo ""
 echo "──────────────────────────────────────────────────────────────"
