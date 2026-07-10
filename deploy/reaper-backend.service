@@ -1,0 +1,14 @@
+[Unit]
+Description=Reaper backend (Flask API)
+After=network.target
+
+[Service]
+Type=simple
+User=chris
+WorkingDirectory=/opt/reaper
+ExecStart=/opt/reaper/venv/bin/python3 backend/app.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
