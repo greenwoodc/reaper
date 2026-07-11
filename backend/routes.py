@@ -274,13 +274,17 @@ def _stream_subprocess(job, args, cwd, extra_env=None, total_tracks=None):
             downloaded = int(core_m.group("downloaded"))
             failed = int(core_m.group("failed"))
             job.message = f"Downloaded {downloaded}, failed {failed} of {total_tracks}"
-            job.rate_limit_until = None
         elif song_m:
+            # Don't clear job.rate_limit_until here: with concurrent-searches > 1,
+            # other in-flight tracks keep logging SongJob lines while a different
+            # track is sitting out the rate-limit wait, which was wiping the
+            # countdown almost immediately instead of letting it run its course.
+            # Job.to_public_dict() already hides it once real time elapses past
+            # rate_limit_until, which is all that's needed.
             action = song_m.group("action").lower()
             track = song_m.group("track").strip()
             job.upsert_track(song_m.group("id"), track, action)
             job.message = f"{action.capitalize()}: {track}"
-            job.rate_limit_until = None
         elif rate_limit_m:
             seconds = int(rate_limit_m.group("seconds"))
             job.rate_limit_until = time.time() + seconds
