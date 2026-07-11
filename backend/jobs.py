@@ -100,6 +100,21 @@ class JobManager:
         with self._lock:
             return self._jobs.get(job_id)
 
+    def has_active(self, kind: str, exclude_id: str | None = None) -> bool:
+        """Whether any not-yet-finished job of this kind (other than
+        exclude_id) exists. Soulseek only supports one session at a time, so
+        the backend uses this to refuse a second concurrent "download" job
+        rather than let two downloads silently collide on the same Docker
+        container/staging CSV. exclude_id lets a job awaiting confirmation
+        check for *other* active downloads without seeing itself as one."""
+        with self._lock:
+            return any(
+                job.id != exclude_id
+                and job.kind == kind
+                and job.status in ("queued", "running", "awaiting_confirmation")
+                for job in self._jobs.values()
+            )
+
     def run_in_background(self, job: Job, target: Callable[..., Any], *args, **kwargs) -> threading.Thread:
         def _wrapper():
             job.status = "running"

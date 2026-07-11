@@ -4,6 +4,49 @@ Scans your Navidrome library, downloads missing tracks via Soulseek, imports the
 
 Designed to be run on the same server/machine as your navidrome server, files are downloaded to a temporary "incoming" directory, then moved to your main music media directory.
 
+![Reaper wizard walkthrough — dashboard, upload & scan, download & import, finalize](docs/demo.gif)
+
+## Why I built this
+
+I had a bunch of Spotify playlists full of music I actually own the right to have — stuff no longer on streaming, bandcamp exclusives, CDs I've ripped — but re-finding and re-downloading every track by hand to get it into my own library was tedious. Reaper automates that loop: point it at a Spotify playlist export, and it figures out what's already in your Navidrome library, sources whatever's missing, and rebuilds the playlist for you, so a library and a playlist just... match. It's a personal tool built for my own homelab setup, but the pipeline (scan → source → import → playlist) is generic enough that it might be useful if you're running Navidrome yourself.
+
+---
+
+## Requirements
+
+- **Python 3** — for the Flask backend (`backend/`) and shared pipeline logic (`core/`). Dependencies: `pip install -r backend/requirements.txt` (Flask, flask-cors, PyYAML).
+- **Node.js ≥ 20.9.0** — for the Next.js 16 frontend. The deploy scripts pin `20.20.2` via nvm; see `deploy/setup_frontend.sh`.
+- **Docker + Docker Compose** — builds and runs the sockseek (Soulseek client) container; also builds the `.NET 10` SDK/runtime images it depends on (pulled automatically, no local .NET install needed).
+- **[beets](https://beets.io/)** — installed separately on the host, imports downloaded tracks into your music library. Not run in Docker; `move_to_library.sh` shells out to whatever `beet` resolves to on `PATH`.
+- **A running Navidrome server** — reachable over the Subsonic API, with credentials for `config.yml`.
+- **A Soulseek account** — credentials for `config/sldl.conf`. See "A note on Soulseek" below.
+- **An Exportify CSV export** of the Spotify playlist(s) you want to pull in.
+
+---
+
+## Getting your playlist CSV
+
+Reaper reads [Exportify](https://exportify.net) CSVs, not Spotify links directly — Spotify doesn't expose playlist contents to third-party tools without going through an export step like this first.
+
+1. Go to **[exportify.net](https://exportify.net)** and log in — it asks you to authorize with your Spotify account (read-only access to your playlists; Exportify runs the export in your browser, it doesn't have its own separate account system).
+2. You'll see a list of your playlists (owned and followed/saved). Find the one(s) you want.
+3. Click the export/download action next to a playlist to download its CSV — one file per playlist, saved to your browser's normal downloads location.
+4. Upload that CSV in Reaper's first wizard step (Upload & Scan).
+
+**Columns Reaper actually needs:** `Artist Name(s)` and `Track Name` are required — a CSV missing either of these (e.g. from a different export tool with different headers) will fail the scan step with a clear error naming what's missing. `Album Name` and `Track URI` are read if present but optional.
+
+**Rank / countdown playlists:** Exportify doesn't export a chart-position column — a playlist's Spotify order is preserved as the CSV's row order, and that's what Reaper falls back to when you don't pick a rank column during upload. If you specifically want numbered ranks (e.g. a "Top 25" countdown) tracked and reported on missing-rank coverage, add a column yourself (e.g. `Rank` with values `1`, `2`, `3`...) to the CSV before uploading, then pick it as the rank column in the upload step.
+
+---
+
+## A note on Soulseek
+
+[Soulseek](https://www.slsknet.org/) is a peer-to-peer file-sharing network and client, run independently since 2001. Reaper doesn't host, index, or provide any files itself — `sockseek` is a headless Soulseek client that searches and downloads directly from other users on the network, the same as the official Soulseek desktop client does.
+
+Files shared over Soulseek are not vetted for copyright status, and downloading copyrighted material without authorization is illegal in most jurisdictions. **Reaper is intended for sourcing music you already own, that's in the public domain, or that's otherwise legally available to download** (e.g. from artists who explicitly permit free distribution). You are responsible for how you use it — see the official [Soulseek rules](https://www.slsknet.org/news/rules) and terms before using the network.
+
+To get an account: download the official client from [slsknet.org](https://www.slsknet.org/) and register a username on first launch — no separate signup step. Reaper doesn't need the desktop client installed to run (it talks to the network directly via `sockseek`), but installing it once is the easiest way to confirm your credentials work and to browse the network yourself.
+
 ---
 
 ## Directory layout

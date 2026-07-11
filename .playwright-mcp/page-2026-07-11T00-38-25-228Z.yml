@@ -1,0 +1,29 @@
+- generic [ref=f2e1]:
+  - link "Settings" [ref=f2e2] [cursor=pointer]:
+    - /url: /settings
+  - main [ref=f2e8]:
+    - generic [ref=f2e33]:
+      - generic [ref=f2e34]:
+        - button "← All playlists" [ref=f2e35]
+        - generic [ref=f2e36]: New Rock
+      - list [ref=f2e37]:
+        - listitem [ref=f2e38]:
+          - button "1 Upload & Scan" [ref=f2e39] [cursor=pointer]:
+            - generic [ref=f2e40]: "1"
+            - generic [ref=f2e41]: Upload & Scan
+        - listitem [ref=f2e43]:
+          - button "2 Download & Import" [ref=f2e44] [cursor=pointer]:
+            - generic [ref=f2e45]: "2"
+            - generic [ref=f2e46]: Download & Import
+        - listitem [ref=f2e48]:
+          - button "3 Finalize" [active] [ref=f2e49] [cursor=pointer]:
+            - generic [ref=f2e50]: "3"
+            - generic [ref=f2e51]: Finalize
+      - paragraph [ref=f2e52]: Navidrome is rescanned to pick up the newly imported files, then Reaper creates (or updates) the Navidrome playlist with everything it found, in your chosen order.
+      - generic [ref=f2e71]:
+        - generic [ref=f2e72]:
+          - generic [ref=f2e73]: Navidrome playlist name (optional)
+          - textbox "New Rock" [ref=f2e74]
+        - button "Rescan & Create Playlist" [ref=f2e75]
+  - button "Open Next.js Dev Tools" [ref=f2e21] [cursor=pointer]
+  - alert [ref=f2e15]

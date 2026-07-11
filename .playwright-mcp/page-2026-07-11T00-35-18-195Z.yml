@@ -1,0 +1,12 @@
+- generic [active] [ref=f1e1]:
+  - link "Settings" [ref=f1e2] [cursor=pointer]:
+    - /url: /settings
+  - main [ref=f1e8]:
+    - generic [ref=f1e9]:
+      - img "Reaper" [ref=f1e10]
+      - paragraph [ref=f1e11]: Reaper checks a Spotify playlist against your Navidrome library, downloads whatever’s missing via Soulseek, and builds the playlist for you. Upload a CSV to start a new one, or pick up where you left off below.
+      - generic [ref=f1e12]:
+        - button "+ New playlist from Exportify CSV" [ref=f1e13]
+        - paragraph [ref=f1e14]: Loading playlists...
+  - button "Open Next.js Dev Tools" [ref=f1e20] [cursor=pointer]
+  - alert [ref=f1e24]
