@@ -84,6 +84,18 @@ def _navidrome_playlist_names() -> set | None:
         return None
 
 
+def _resolve_playlist_dir(slug: str) -> Path | None:
+    """Resolve slug to playlists/<slug>, rejecting anything that would escape
+    PLAYLISTS_DIR. Flask's <slug> converter can't contain '/', so today the
+    only way to do that is a lone ".." segment (resolving to the repo root)
+    — but validate properly rather than relying on that being the only case
+    forever."""
+    playlist_dir = PLAYLISTS_DIR / slug
+    if playlist_dir.resolve().parent != PLAYLISTS_DIR.resolve():
+        return None
+    return playlist_dir
+
+
 # ── Playlist listing / detail ────────────────────────────────────────────────
 
 @api_bp.get("/playlists")
@@ -123,8 +135,8 @@ def list_playlists():
 
 @api_bp.delete("/playlists/<slug>")
 def delete_playlist(slug):
-    playlist_dir = PLAYLISTS_DIR / slug
-    if not playlist_dir.is_dir() or playlist_dir.resolve().parent != PLAYLISTS_DIR.resolve():
+    playlist_dir = _resolve_playlist_dir(slug)
+    if not playlist_dir or not playlist_dir.is_dir():
         return jsonify({"error": "playlist not found"}), 404
     shutil.rmtree(playlist_dir)
     return jsonify({"deleted": slug})
@@ -132,7 +144,9 @@ def delete_playlist(slug):
 
 @api_bp.get("/playlists/<slug>/found")
 def get_found(slug):
-    playlist_dir = PLAYLISTS_DIR / slug
+    playlist_dir = _resolve_playlist_dir(slug)
+    if not playlist_dir:
+        return jsonify({"error": "playlist not found"}), 404
     found_file = playlist_dir / "found_tracks.json"
     missing_file = playlist_dir / "missing_tracks.csv"
 
@@ -156,7 +170,10 @@ def get_found(slug):
 
 @api_bp.get("/playlists/<slug>/cleanup-preview")
 def cleanup_preview(slug):
-    csv_path = PLAYLISTS_DIR / slug / "missing_tracks.csv"
+    playlist_dir = _resolve_playlist_dir(slug)
+    if not playlist_dir:
+        return jsonify({"error": "playlist not found"}), 404
+    csv_path = playlist_dir / "missing_tracks.csv"
     if not csv_path.exists():
         return jsonify({"error": "missing_tracks.csv not found"}), 404
 
@@ -338,12 +355,20 @@ def _download_job(job, slug: str, playlist_name: str, assume_yes: bool):
 
 @api_bp.post("/playlists/<slug>/download")
 def start_download(slug):
-    playlist_dir = PLAYLISTS_DIR / slug
+    playlist_dir = _resolve_playlist_dir(slug)
+    if not playlist_dir:
+        return jsonify({"error": "playlist not found"}), 404
     if not (playlist_dir / "missing_tracks.csv").exists():
         return jsonify({"error": "missing_tracks.csv not found — run a scan first"}), 404
 
     meta = _read_meta(playlist_dir)
     playlist_name = meta.get("playlist_name", slug)
+
+    if jobs.has_active("download"):
+        return jsonify({
+            "error": "A download is already in progress — Soulseek only supports one "
+                     "session at a time. Wait for it to finish before starting another."
+        }), 409
 
     job = jobs.create(kind="download", playlist_slug=slug, playlist_name=playlist_name)
     jobs.run_in_background(job, _download_job, slug, playlist_name, False)
@@ -363,6 +388,12 @@ def confirm_job(job_id):
         job.status = "error"
         job.error = "Cancelled by user."
         return jsonify(job.to_public_dict())
+
+    if job.kind == "download" and jobs.has_active("download", exclude_id=job.id):
+        return jsonify({
+            "error": "A download is already in progress — Soulseek only supports one "
+                     "session at a time. Wait for it to finish before starting another."
+        }), 409
 
     new_job = jobs.create(kind=job.kind, playlist_slug=job.playlist_slug, playlist_name=job.playlist_name)
     jobs.run_in_background(new_job, _download_job, job.playlist_slug, job.playlist_name, True)
@@ -421,7 +452,9 @@ def _finalize_job(job, slug: str, playlist_name: str, title):
 
 @api_bp.post("/playlists/<slug>/finalize")
 def start_finalize(slug):
-    playlist_dir = PLAYLISTS_DIR / slug
+    playlist_dir = _resolve_playlist_dir(slug)
+    if not playlist_dir:
+        return jsonify({"error": "playlist not found"}), 404
     if not (playlist_dir / "found_tracks.json").exists():
         return jsonify({"error": "found_tracks.json not found — run a scan first"}), 404
 

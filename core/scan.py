@@ -15,6 +15,12 @@ from core.config import slugify
 from core.subsonic import make_api_get
 from core.matching import search_navidrome
 
+REQUIRED_COLUMNS = ["Artist Name(s)", "Track Name"]
+
+
+class MissingColumnsError(Exception):
+    pass
+
 
 @dataclass
 class ScanResult:
@@ -34,6 +40,17 @@ def read_csv(csv_path: Path, rank_col: str | None) -> list[dict]:
     with open(csv_path, newline='', encoding='utf-8-sig') as f:
         reader = csv.DictReader(f)
         rows = list(reader)
+        fieldnames = reader.fieldnames or []
+
+    missing_cols = [c for c in REQUIRED_COLUMNS if c not in fieldnames]
+    if missing_cols:
+        raise MissingColumnsError(
+            f"CSV is missing required column(s): {', '.join(missing_cols)}. "
+            f"Found columns: {', '.join(fieldnames) or '(none — is this a valid CSV?)'}. "
+            "Reaper expects an Exportify-format export (Spotify playlist → CSV)."
+        )
+    if not rows:
+        raise MissingColumnsError("CSV has a header row but no tracks — nothing to scan.")
 
     tracks = []
     for i, row in enumerate(rows):

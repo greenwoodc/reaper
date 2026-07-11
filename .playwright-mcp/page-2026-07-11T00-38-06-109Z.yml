@@ -1,0 +1,42 @@
+- generic [ref=f2e1]:
+  - link "Settings" [ref=f2e2] [cursor=pointer]:
+    - /url: /settings
+  - main [ref=f2e8]:
+    - generic [ref=f2e33]:
+      - generic [ref=f2e34]:
+        - button "← All playlists" [ref=f2e35]
+        - generic [ref=f2e36]: New Rock
+      - list [ref=f2e37]:
+        - listitem [ref=f2e38]:
+          - button "1 Upload & Scan" [active] [ref=f2e39] [cursor=pointer]:
+            - generic [ref=f2e40]: "1"
+            - generic [ref=f2e41]: Upload & Scan
+        - listitem [ref=f2e43]:
+          - button "2 Download & Import" [ref=f2e44] [cursor=pointer]:
+            - generic [ref=f2e45]: "2"
+            - generic [ref=f2e46]: Download & Import
+        - listitem [ref=f2e48]:
+          - button "3 Finalize" [ref=f2e49] [cursor=pointer]:
+            - generic [ref=f2e50]: "3"
+            - generic [ref=f2e51]: Finalize
+      - paragraph [ref=f2e52]: Upload an Exportify CSV (a Spotify playlist export). Reaper searches your Navidrome library for every track and sorts them into found vs. missing.
+      - generic [ref=f2e56]:
+        - paragraph [ref=f2e57]:
+          - text: Export a playlist from Spotify with
+          - link "Exportify" [ref=f2e58] [cursor=pointer]:
+            - /url: https://exportify.net
+          - text: and upload the CSV here. Reaper checks every track against your Navidrome library and sorts them into what it already has and what it’s missing.
+        - generic [ref=f2e59]:
+          - generic [ref=f2e60]:
+            - generic [ref=f2e61]: Exportify CSV
+            - button "Choose File" [ref=f2e62]
+          - generic [ref=f2e63]:
+            - generic [ref=f2e64]: Playlist name (optional)
+            - textbox "Defaults to the CSV filename" [ref=f2e65]
+          - generic [ref=f2e66]:
+            - generic [ref=f2e67]: Rank column (optional)
+            - textbox "e.g. Rank — for countdown-style playlists" [ref=f2e68]
+            - paragraph [ref=f2e69]: Only needed for countdown-style playlists — pick the CSV column that holds each track’s rank (e.g. “Rank” or “Position”) so the final playlist keeps that order.
+          - button "Scan Navidrome" [ref=f2e70]
+  - button "Open Next.js Dev Tools" [ref=f2e21] [cursor=pointer]
+  - alert [ref=f2e15]

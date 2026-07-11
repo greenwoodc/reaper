@@ -78,6 +78,11 @@ def _read_env_var(key: str, default: str = "") -> str:
 
 
 def _write_env_var(key: str, value: str) -> None:
+    # Strip embedded newlines — .env is one-KEY-per-line, so a value
+    # containing "\n" would otherwise inject an arbitrary extra line (a fake
+    # second variable) into the file. Belt-and-suspenders alongside the
+    # shell scripts parsing .env as plain data instead of `source`-ing it.
+    value = value.replace("\n", "").replace("\r", "")
     lines = ENV_PATH.read_text().splitlines() if ENV_PATH.exists() else []
     for i, line in enumerate(lines):
         if line.strip().startswith(f"{key}="):

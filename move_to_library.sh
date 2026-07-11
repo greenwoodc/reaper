@@ -9,11 +9,16 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# .env values come from the webapp's Settings API (no auth) — parsed as
+# plain KEY=VALUE data here, deliberately NOT `source`d as bash, since that
+# would let a value like /tmp/$(malicious command) execute on every run.
 if [ -f "$SCRIPT_DIR/.env" ]; then
-    set -a
-    # shellcheck source=/dev/null
-    source "$SCRIPT_DIR/.env"
-    set +a
+    while IFS='=' read -r _env_key _env_value; do
+        [[ -z "$_env_key" || "$_env_key" == \#* ]] && continue
+        _env_value="${_env_value%\"}"; _env_value="${_env_value#\"}"
+        _env_value="${_env_value%\'}"; _env_value="${_env_value#\'}"
+        export "$_env_key=$_env_value"
+    done < "$SCRIPT_DIR/.env"
 fi
 MEDIA_ROOT="${REAPER_MEDIA_ROOT:-/mnt/media}"
 INCOMING_DIR="${REAPER_INCOMING_DIR:-$MEDIA_ROOT/incoming}"

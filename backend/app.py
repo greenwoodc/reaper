@@ -60,4 +60,12 @@ if __name__ == "__main__":
     # "localhost:5000" (though not "127.0.0.1:5000", which is what makes this
     # so confusing). Linux hosts don't have this problem, but we keep 5001
     # everywhere for consistency.
-    app.run(host="0.0.0.0", port=5001, debug=True, threaded=True, use_reloader=False)
+    #
+    # debug=False by default: Werkzeug's debug mode exposes full tracebacks
+    # (source snippets, file paths) on any unhandled exception and ships an
+    # interactive debugger console — both reachable by anyone on the same
+    # Tailscale/LAN network given this binds to 0.0.0.0 with no auth. Opt in
+    # explicitly for local development only, e.g.:
+    #   REAPER_DEBUG=1 python3 backend/app.py
+    debug = os.environ.get("REAPER_DEBUG") == "1"
+    app.run(host="0.0.0.0", port=5001, debug=debug, threaded=True, use_reloader=False)

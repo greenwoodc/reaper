@@ -12,11 +12,16 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ── Media root (host path Docker mounts as /data — set via the webapp's
 # Settings page, or REAPER_MEDIA_ROOT in .env) ───────────────────────────────
+# .env values come from the webapp's Settings API (no auth) — parsed as
+# plain KEY=VALUE data here, deliberately NOT `source`d as bash, since that
+# would let a value like /tmp/$(malicious command) execute on every run.
 if [ -f "$SCRIPT_DIR/.env" ]; then
-    set -a
-    # shellcheck source=/dev/null
-    source "$SCRIPT_DIR/.env"
-    set +a
+    while IFS='=' read -r _env_key _env_value; do
+        [[ -z "$_env_key" || "$_env_key" == \#* ]] && continue
+        _env_value="${_env_value%\"}"; _env_value="${_env_value#\"}"
+        _env_value="${_env_value%\'}"; _env_value="${_env_value#\'}"
+        export "$_env_key=$_env_value"
+    done < "$SCRIPT_DIR/.env"
 fi
 MEDIA_ROOT="${REAPER_MEDIA_ROOT:-/mnt/media}"
 MUSIC_DIR="$MEDIA_ROOT/Music"
