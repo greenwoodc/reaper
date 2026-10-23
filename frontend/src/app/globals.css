@@ -16,10 +16,18 @@
   --color-accent: #b3423a;
   --color-accent-strong: #8c2f28;
   --color-accent-contrast: #fdf6f0;
+  /* --color-accent only reaches 3.3:1 as text, so it stays a fill colour;
+     this lighter step is for accent-coloured text and focus rings (5.5:1). */
+  --color-accent-text: #d96a5f;
 
-  --color-success: #00d764;
+  /* --color-border is for decorative dividers. Form-control outlines need
+     3:1 against the surface (WCAG 1.4.11), which this step meets. */
+  --color-control-border: #7d645c;
+
+  /* Warmed toward the rust palette rather than stock neon green/amber. */
+  --color-success: #7fd38a;
   --color-error: #ff5a4d;
-  --color-warning: #ffab00;
+  --color-warning: #e9b04f;
 }
 
 @theme inline {
@@ -31,10 +39,12 @@
   --color-accent: var(--color-accent);
   --color-accent-strong: var(--color-accent-strong);
   --color-accent-contrast: var(--color-accent-contrast);
+  --color-accent-text: var(--color-accent-text);
+  --color-control-border: var(--color-control-border);
   --color-success: var(--color-success);
   --color-error: var(--color-error);
   --color-warning: var(--color-warning);
-  --font-sans: var(--font-geist-sans);
+  --font-sans: var(--font-archivo);
   --font-display: var(--font-metal-mania);
 }
 
@@ -49,4 +59,26 @@ html {
 body {
   background: var(--color-bg);
   color: var(--color-text);
+}
+
+p {
+  text-wrap: pretty;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-accent-text);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Spinners stay (they're the only "still working" signal); purely
+     decorative pulsing and transitions go. */
+  .animate-pulse {
+    animation: none;
+  }
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+  }
 }

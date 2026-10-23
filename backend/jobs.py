@@ -6,6 +6,7 @@ process does, which matches how the rest of Reaper already treats state
 (everything durable lives in playlists/<slug>/ on disk instead).
 """
 
+import sys
 import threading
 import time
 import traceback
@@ -41,6 +42,10 @@ class Job:
     # (comparing raw timestamps across two machines with unsynced clocks is
     # exactly what made the countdown show inconsistently).
     rate_limit_until: Optional[float] = None
+    # Set by POST /api/jobs/<id>/cancel. Scan jobs check it between tracks;
+    # download jobs also have their subprocess (proc) signalled directly.
+    cancel_requested: bool = False
+    proc: Any = field(default=None, repr=False)
 
     def append_log(self, line: str, max_lines: int = 500) -> None:
         self.log.append(line)
@@ -80,10 +85,18 @@ class Job:
         }
 
 
+class JobCancelled(Exception):
+    """Raised inside a job's target when the user cancels it."""
+
+
 class JobManager:
     def __init__(self):
         self._jobs: dict[str, Job] = {}
         self._lock = threading.Lock()
+        # Unix time before which a new download must not start. Set after a
+        # cancelled download, since the cancel path skips the script's own
+        # post-session cooldown that lets Soulseek register the disconnect.
+        self.download_cooldown_until: float = 0.0
 
     def create(self, kind: str, playlist_slug: str, playlist_name: str = "") -> Job:
         job = Job(
@@ -122,10 +135,19 @@ class JobManager:
                 target(job, *args, **kwargs)
                 if job.status == "running":
                     job.status = "done"
+            except JobCancelled as exc:
+                job.status = "error"
+                job.error = str(exc) or "Cancelled."
+                job.append_log(f"✖ {job.error}")
             except Exception as exc:  # noqa: BLE001 - surface any failure to the UI
                 job.status = "error"
                 job.error = str(exc)
-                job.append_log(traceback.format_exc())
+                # Full traceback goes to the server's own output, not the
+                # job log the UI shows; users get the one-line reason.
+                job.append_log(f"✖ {exc}")
+                traceback.print_exc(file=sys.stderr)
+            finally:
+                job.proc = None
 
         thread = threading.Thread(target=_wrapper, daemon=True)
         thread.start()

@@ -24,11 +24,22 @@ def _auth_params(config: dict) -> dict:
     }
 
 
-def make_api_get(config: dict):
+class NavidromeUnreachable(Exception):
+    """Navidrome couldn't be reached at all (connection refused, DNS failure,
+    timeout) — as opposed to reachable-but-returned-an-error."""
+
+
+def make_api_get(config: dict, timeout: float = 15):
     """Return a simple api_get(endpoint, params) -> dict function bound to config.
 
     Used for search3/ping/startScan/getScanStatus — anything that doesn't need
     repeated query-string keys.
+
+    A Subsonic-level error (bad credentials, unknown id) still comes back as
+    {}, but a network failure raises NavidromeUnreachable. It used to return
+    {} too, which made a scan against a downed server indistinguishable from
+    "no match" — every track silently landed in missing_tracks.csv, ready to
+    be re-downloaded from Soulseek.
     """
     base_url = config["navidrome_url"].rstrip("/")
     auth_base = _auth_params(config)
@@ -37,18 +48,19 @@ def make_api_get(config: dict):
         merged = {**auth_base, **params}
         url = f"{base_url}/rest/{endpoint}?" + parse.urlencode(merged)
         try:
-            with request.urlopen(url, timeout=15) as resp:
+            with request.urlopen(url, timeout=timeout) as resp:
                 raw = resp.read().decode("utf-8", errors="replace")
-                try:
-                    payload = json.loads(raw)
-                except json.JSONDecodeError:
-                    return {}
-                response = payload.get("subsonic-response", {})
-                if response.get("status") not in (None, "ok"):
-                    return {}
-                return payload
-        except URLError:
+        except (URLError, OSError) as exc:
+            reason = getattr(exc, "reason", exc)
+            raise NavidromeUnreachable(f"Can't reach Navidrome at {base_url} ({reason}).") from exc
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
             return {}
+        response = payload.get("subsonic-response", {})
+        if response.get("status") not in (None, "ok"):
+            return {}
+        return payload
 
     return api_get
 
@@ -94,6 +106,11 @@ def make_api(config: dict):
 
 def check_connection(api_get) -> bool:
     """Verify Navidrome is reachable and credentials are valid."""
-    resp = api_get("ping.view", {})
+    try:
+        resp = api_get("ping.view", {})
+    except NavidromeUnreachable:
+        return False
+    if resp is None:
+        return False
     status = resp.get("subsonic-response", {}).get("status")
     return status == "ok"

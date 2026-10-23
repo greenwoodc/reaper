@@ -34,8 +34,10 @@ export default function RateLimitCountdown({ secondsRemaining }: RateLimitCountd
 
   return (
     <div className="flex items-center gap-2 rounded-md border border-[var(--color-warning)]/40 bg-[var(--color-warning)]/10 px-3 py-2 text-xs text-[var(--color-warning)]">
-      <span className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-[var(--color-warning)]" />
-      Soulseek search rate limit hit — resuming in {displayed}s
+      <span aria-hidden="true" className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-[var(--color-warning)]" />
+      {/* Announce the pause once, not every tick of the countdown. */}
+      <span role="status">Soulseek search rate limit hit.</span>
+      <span aria-hidden="true">Resuming in {displayed}s</span>
     </div>
   );
 }

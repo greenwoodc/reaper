@@ -31,6 +31,7 @@ There is no test suite — verify backend changes by running the Flask app and e
 
 **`download_missing.sh` and `move_to_library.sh` are the one place bash still does real work** — Docker/Soulseek orchestration and the `beet import` call. The backend invokes them via `subprocess.Popen`, tailing stdout for progress (see the log-parsing regexes in `backend/routes.py` — they're matched against `sockseek`'s actual log format, not guessed). Two things that bit us building this, both now fixed but worth knowing if they resurface:
   - `docker compose run ... | tee` block-buffers when piped to a non-tty — needs `stdbuf -oL` on `tee` or output silently sits in a buffer for minutes.
+  - The backend passes `--slug` to `download_missing.sh` rather than letting it re-derive the folder from the display name — its bash `slugify` doesn't match `core.config.slugify` for names with `'`, `/`, ` - ` or accents ("90's Mix" → `90s_mix` in Python, `90_s_mix` in bash).
   - `sockseek` exits non-zero whenever *any* individual track fails (completely normal for Soulseek P2P) — under `set -e` that aborts the whole script before cleanup/cooldown run. `download_missing.sh` captures the real exit code via `${PIPESTATUS[0]}` inside a `set +e`/`set -e` bracket instead of letting it propagate.
 
 **Per-playlist state lives in `playlists/<slug>/`** (slug = lowercased, non-alphanumerics → `_`, gitignored):
@@ -65,3 +66,13 @@ There is no test suite — verify backend changes by running the Flask app and e
 ## Git workflow
 
 This repo hit the classic squash-merge trap repeatedly (squash-merging a PR breaks the branch's ancestry link to `main`, so continuing to commit on that same branch and merging again produces phantom conflicts on files that didn't actually change). Fixed at the repo level: squash merging is disabled and branches auto-delete on merge — always branch fresh off `origin/main` for new work rather than reusing an already-merged branch.
+
+## graphify
+
+This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
+
+Rules:
+- For codebase questions, first run `graphify query "<question>"` when graphify-out/graph.json exists. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
+- If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
+- Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
+- After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).

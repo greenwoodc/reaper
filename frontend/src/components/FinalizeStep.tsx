@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useState } from "react";
 import { startFinalize } from "@/lib/api";
 import { useJob } from "@/lib/useJob";
 import type { FinalizeResult } from "@/lib/types";
+import { btnPrimary, btnSecondary, inputClass, labelClass } from "@/lib/ui";
 import RadialProgress from "./RadialProgress";
 
 interface FinalizeStepProps {
@@ -23,6 +24,7 @@ export default function FinalizeStep({ slug, playlistName }: FinalizeStepProps) 
   const [error, setError] = useState<string | null>(null);
 
   const job = useJob(jobId);
+  const id = useId();
 
   async function handleStart() {
     setError(null);
@@ -37,12 +39,12 @@ export default function FinalizeStep({ slug, playlistName }: FinalizeStepProps) 
   if (job?.status === "done" && job.result) {
     const r = job.result as unknown as FinalizeResult;
     return (
-      <div className="flex flex-col items-center gap-4 text-center">
-        <p className="text-lg font-medium text-[var(--color-text)]">
+      <div role="status" className="flex flex-col items-center gap-4 text-center">
+        <p className="break-words text-lg font-medium text-[var(--color-text)]">
           &ldquo;{r.display_name}&rdquo; {r.created ? "created" : "updated"} in Navidrome
         </p>
         <p className="text-sm text-[var(--color-muted)]">
-          {r.track_count} tracks — {r.coverage_pct.toFixed(1)}% coverage
+          {r.track_count} tracks · {r.coverage_pct.toFixed(1)}% coverage
         </p>
         {r.missing_ranks.length > 0 && (
           <p className="text-xs text-[var(--color-warning)]">
@@ -56,12 +58,10 @@ export default function FinalizeStep({ slug, playlistName }: FinalizeStepProps) 
   if (job?.status === "error") {
     return (
       <div className="flex flex-col items-center gap-4 text-center">
-        <p className="text-[var(--color-error)]">{job.error}</p>
-        <button
-          type="button"
-          onClick={() => setJobId(null)}
-          className="rounded-full border border-[var(--color-border)] px-6 py-2 text-sm text-[var(--color-text)]"
-        >
+        <p role="alert" className="max-w-lg break-words text-[var(--color-error)]">
+          {job.error}
+        </p>
+        <button type="button" onClick={() => setJobId(null)} className={btnSecondary}>
           Try again
         </button>
       </div>
@@ -76,8 +76,9 @@ export default function FinalizeStep({ slug, playlistName }: FinalizeStepProps) 
           total={job.total}
           indeterminate={job.total === 0}
           size={120}
+          label="Finalize progress"
         />
-        <p className="max-w-xs truncate text-center text-sm text-[var(--color-muted)]">
+        <p role="status" className="max-w-sm break-words text-center text-sm text-[var(--color-muted)]">
           {PHASE_LABELS[job.phase] || job.message || "Working..."}
         </p>
       </div>
@@ -87,23 +88,24 @@ export default function FinalizeStep({ slug, playlistName }: FinalizeStepProps) 
   return (
     <div className="flex w-full max-w-md flex-col items-center gap-4">
       <div className="w-full">
-        <label className="mb-1 block text-sm font-medium text-[var(--color-text)]">
+        <label htmlFor={`${id}-title`} className={labelClass}>
           Navidrome playlist name <span className="text-[var(--color-muted)]">(optional)</span>
         </label>
         <input
+          id={`${id}-title`}
           type="text"
           value={title}
           onChange={(e) => setTitle(e.target.value)}
           placeholder={playlistName}
-          className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm text-[var(--color-text)] placeholder:text-[var(--color-muted)]"
+          className={inputClass}
         />
       </div>
-      {error && <p className="text-sm text-[var(--color-error)]">{error}</p>}
-      <button
-        type="button"
-        onClick={handleStart}
-        className="rounded-full bg-[var(--color-accent)] px-6 py-2 text-sm font-semibold text-[var(--color-accent-contrast)] hover:opacity-90"
-      >
+      {error && (
+        <p role="alert" className="text-sm text-[var(--color-error)]">
+          {error}
+        </p>
+      )}
+      <button type="button" onClick={handleStart} className={btnPrimary}>
         Rescan & Create Playlist
       </button>
     </div>

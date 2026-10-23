@@ -1,20 +1,19 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import Link from "next/link";
 import { getSettings, updateSettings } from "@/lib/api";
 import type { Settings, SettingsUpdate } from "@/lib/types";
+import { btnPrimary, btnText, inputClass } from "@/lib/ui";
 
 const FORMATS = ["mp3", "flac", "ogg", "wav", "m4a", "opus"];
 
-const inputClass =
-  "w-full rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm text-[var(--color-text)] placeholder:text-[var(--color-muted)]";
 const checkboxRowClass = "flex items-start gap-3 text-sm text-[var(--color-text)]";
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <fieldset className="flex flex-col gap-4 border-t border-[var(--color-border)] pt-6 first:border-t-0 first:pt-0">
-      <legend className="mb-1 text-xs font-semibold uppercase tracking-wide text-[var(--color-accent)]">
+      <legend className="mb-1 text-xs font-semibold uppercase tracking-wide text-[var(--color-accent-text)]">
         {title}
       </legend>
       {children}
@@ -22,20 +21,35 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
+/** Wraps a single control in a real <label>, so it gets an accessible
+ * name and clicking the text focuses the input. */
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="flex flex-col gap-1.5">
+    <label className="flex flex-col gap-1.5">
       <span className="text-sm font-medium text-[var(--color-text)]">{label}</span>
+      {children}
+    </label>
+  );
+}
+
+/** For a set of controls (e.g. toggle buttons) that can't share one <label>. */
+function FieldGroup({ label, children }: { label: string; children: React.ReactNode }) {
+  const id = useId();
+  return (
+    <div role="group" aria-labelledby={id} className="flex flex-col gap-1.5">
+      <span id={id} className="text-sm font-medium text-[var(--color-text)]">
+        {label}
+      </span>
       {children}
     </div>
   );
 }
 
 function formatPillClass(active: boolean) {
-  return `cursor-pointer rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+  return `inline-flex min-h-9 cursor-pointer items-center rounded-full border px-4 text-xs font-medium transition-colors ${
     active
       ? "border-[var(--color-accent)] bg-[var(--color-accent)] text-[var(--color-accent-contrast)]"
-      : "border-[var(--color-border)] text-[var(--color-muted)] hover:border-[var(--color-accent)]"
+      : "border-[var(--color-control-border)] text-[var(--color-muted)] hover:border-[var(--color-accent-text)]"
   }`;
 }
 
@@ -46,6 +60,7 @@ export default function SettingsForm() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const hintId = useId();
 
   const [navUrl, setNavUrl] = useState("");
   const [navUser, setNavUser] = useState("");
@@ -161,8 +176,10 @@ export default function SettingsForm() {
   if (loadError) {
     return (
       <div className="flex w-full max-w-2xl flex-col items-center gap-4 text-center">
-        <p className="text-sm text-[var(--color-error)]">{loadError}</p>
-        <Link href="/" className="text-sm text-[var(--color-muted)] hover:text-[var(--color-text)]">
+        <p role="alert" className="text-sm text-[var(--color-error)]">
+          {loadError}
+        </p>
+        <Link href="/" className={`${btnText} text-[var(--color-muted)] hover:text-[var(--color-text)]`}>
           ← Back
         </Link>
       </div>
@@ -170,16 +187,20 @@ export default function SettingsForm() {
   }
 
   if (!settings) {
-    return <p className="text-sm text-[var(--color-muted)]">Loading settings...</p>;
+    return (
+      <p role="status" className="text-sm text-[var(--color-muted)]">
+        Loading settings...
+      </p>
+    );
   }
 
   return (
     <form onSubmit={handleSave} className="flex w-full max-w-2xl flex-col gap-8 pb-16">
       <div className="flex items-center justify-between">
-        <Link href="/" className="text-sm text-[var(--color-muted)] transition-colors hover:text-[var(--color-text)]">
+        <Link href="/" className={`${btnText} text-[var(--color-muted)] hover:text-[var(--color-text)]`}>
           ← Back
         </Link>
-        <h1 className="font-[family-name:var(--font-display)] text-2xl tracking-wide text-[var(--color-accent)]">
+        <h1 className="font-[family-name:var(--font-display)] text-3xl tracking-wide text-[var(--color-accent-text)]">
           Settings
         </h1>
       </div>
@@ -251,20 +272,21 @@ export default function SettingsForm() {
       </Section>
 
       <Section title="Download preferences">
-        <Field label="Accepted file types">
+        <FieldGroup label="Accepted file types">
           <div className="flex flex-wrap gap-2">
             {FORMATS.map((fmt) => (
               <button
                 key={fmt}
                 type="button"
                 onClick={() => toggleFormat(fmt)}
+                aria-pressed={formats.includes(fmt)}
                 className={formatPillClass(formats.includes(fmt))}
               >
                 {fmt}
               </button>
             ))}
           </div>
-        </Field>
+        </FieldGroup>
         <Field label="Preferred format">
           <select value={prefFormat} onChange={(e) => setPrefFormat(e.target.value)} className={inputClass}>
             {FORMATS.map((fmt) => (
@@ -294,7 +316,7 @@ export default function SettingsForm() {
           <span>
             Desperate search
             <span className="block text-xs text-[var(--color-muted)]">
-              Searches by title only and filters by artist afterward — significantly improves hit rate,
+              Searches by title only and filters by artist afterward. Significantly improves hit rate,
               especially behind CGNAT.
             </span>
           </span>
@@ -317,10 +339,11 @@ export default function SettingsForm() {
             value={mediaRoot}
             onChange={(e) => setMediaRoot(e.target.value)}
             placeholder="/mnt/media"
+            aria-describedby={`${hintId}-media`}
             className={inputClass}
           />
         </Field>
-        <p className="text-xs text-[var(--color-muted)]">
+        <p id={`${hintId}-media`} className="text-xs text-[var(--color-muted)]">
           Mounted into the Soulseek container as <code>/data</code>. Expects a <code>Music/</code> subfolder (your
           library). Changing this requires restarting the Docker container (<code>docker compose down</code> then
           re-running a download).
@@ -331,13 +354,14 @@ export default function SettingsForm() {
             value={incomingDir}
             onChange={(e) => setIncomingDir(e.target.value)}
             placeholder={`${mediaRoot || "/mnt/media"}/incoming`}
+            aria-describedby={`${hintId}-incoming`}
             className={inputClass}
           />
         </Field>
-        <p className="text-xs text-[var(--color-muted)]">
+        <p id={`${hintId}-incoming`} className="text-xs text-[var(--color-muted)]">
           Staging area for fresh downloads awaiting beets import. Defaults to an <code>incoming/</code> subfolder of
-          the media root above, but can point elsewhere (e.g. a faster disk) — mounted into the Soulseek container
-          separately from the media root.
+          the media root above, but can point elsewhere (e.g. a faster disk). It&rsquo;s mounted into the Soulseek
+          container separately from the media root.
         </p>
         <div className="grid grid-cols-2 gap-4">
           <Field label="User ID (PUID)">
@@ -345,6 +369,7 @@ export default function SettingsForm() {
               type="text"
               inputMode="numeric"
               value={puid}
+              aria-describedby={`${hintId}-ids`}
               onChange={(e) => setPuid(e.target.value)}
               className={inputClass}
             />
@@ -354,15 +379,16 @@ export default function SettingsForm() {
               type="text"
               inputMode="numeric"
               value={pgid}
+              aria-describedby={`${hintId}-ids`}
               onChange={(e) => setPgid(e.target.value)}
               className={inputClass}
             />
           </Field>
         </div>
-        <p className="text-xs text-[var(--color-muted)]">
-          Must match the owner of the folders above (check with <code>id -u</code> / <code>id -g</code> on the host)
-          — the Soulseek container writes files as this user so beets can read and move them afterward. Defaults to
-          1000, the first regular user on most Linux distros.
+        <p id={`${hintId}-ids`} className="text-xs text-[var(--color-muted)]">
+          Must match the owner of the folders above (check with <code>id -u</code> / <code>id -g</code> on the
+          host). The Soulseek container writes files as this user so beets can read and move them afterward.
+          Defaults to 1000, the first regular user on most Linux distros.
         </p>
       </Section>
 
@@ -370,7 +396,8 @@ export default function SettingsForm() {
         <button
           type="button"
           onClick={() => setShowAdvanced((v) => !v)}
-          className="self-start text-sm text-[var(--color-accent)] hover:opacity-80"
+          aria-expanded={showAdvanced}
+          className={`${btnText} self-start text-[var(--color-accent-text)] hover:opacity-80`}
         >
           {showAdvanced ? "Hide" : "Show"} advanced tuning
         </button>
@@ -445,14 +472,12 @@ export default function SettingsForm() {
         )}
       </div>
 
-      {saveError && <p className="text-sm text-[var(--color-error)]">{saveError}</p>}
-      {saved && !saveError && <p className="text-sm text-[var(--color-success)]">Settings saved.</p>}
+      <div role="status" className="empty:hidden">
+        {saveError && <p className="text-sm text-[var(--color-error)]">{saveError}</p>}
+        {saved && !saveError && <p className="text-sm text-[var(--color-success)]">Settings saved.</p>}
+      </div>
 
-      <button
-        type="submit"
-        disabled={saving}
-        className="self-start rounded-full bg-[var(--color-accent)] px-6 py-2 text-sm font-semibold text-[var(--color-accent-contrast)] hover:opacity-90 disabled:opacity-50"
-      >
+      <button type="submit" disabled={saving} className={`${btnPrimary} self-start`}>
         {saving ? "Saving..." : "Save settings"}
       </button>
     </form>

@@ -3,7 +3,11 @@
 # webapp backend (backend/routes.py); also runnable directly.
 #
 # Usage:
-#   ./download_missing.sh --playlist "Hauraki Top 25"
+#   ./download_missing.sh --playlist "Hauraki Top 25" [--slug hauraki_top_25]
+#
+# --slug names the playlists/<slug>/ folder directly. The webapp always
+# passes it; without it the slug is derived from --playlist below, which
+# only matches Python's core.config.slugify for plain ASCII names.
 #
 
 set -euo pipefail
@@ -34,15 +38,20 @@ export INCOMING_DIR
 
 # ── STEP 0: Parse Arguments ──────────────────────────────────────────────────
 PLAYLIST=""
+SLUG=""
 while [[ $# -gt 0 ]]; do
     case $1 in
         --playlist)
             PLAYLIST="$2"
             shift 2
             ;;
+        --slug)
+            SLUG="$2"
+            shift 2
+            ;;
         *)
             echo "❌ Unknown argument: $1"
-            echo "Usage: $0 --playlist \"Playlist Name\""
+            echo "Usage: $0 --playlist \"Playlist Name\" [--slug folder_name]"
             exit 1
             ;;
     esac
@@ -59,7 +68,13 @@ slugify() {
     echo "$1" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9_-]+/_/g' | sed -E 's/^_+|_+$//g'
 }
 
-SLUG=$(slugify "$PLAYLIST")
+if [ -z "$SLUG" ]; then
+    SLUG=$(slugify "$PLAYLIST")
+fi
+if [[ "$SLUG" == *"/"* || "$SLUG" == "." || "$SLUG" == ".." ]]; then
+    echo "❌ Invalid --slug: $SLUG"
+    exit 1
+fi
 PLAYLIST_DIR="$SCRIPT_DIR/playlists/$SLUG"
 CSV_PATH="$PLAYLIST_DIR/missing_tracks.csv"
 
@@ -124,11 +139,13 @@ echo ""
 MUSIC_UID=$(stat -c '%u' "$MUSIC_DIR")
 MUSIC_GID=$(stat -c '%g' "$MUSIC_DIR")
 
-if [ "$MUSIC_UID" != "1000" ] || [ "$MUSIC_GID" != "1000" ]; then
+EXPECTED_UID="${PUID:-1000}"
+EXPECTED_GID="${PGID:-1000}"
+if [ "$MUSIC_UID" != "$EXPECTED_UID" ] || [ "$MUSIC_GID" != "$EXPECTED_GID" ]; then
     echo ""
-    echo "⚠️  WARNING: Music folder owned by UID=$MUSIC_UID GID=$MUSIC_GID (expected 1000:1000)."
+    echo "⚠️  WARNING: Music folder owned by UID=$MUSIC_UID GID=$MUSIC_GID (expected $EXPECTED_UID:$EXPECTED_GID)."
     echo "   Downloaded files may be unreadable by beets in Phase 2b."
-    echo "   Update 'user:' in docker-compose.yml to match, or fix with:"
+    echo "   Set PUID/PGID in Settings (or .env) to match, or fix with:"
     echo "     sudo chown -R \$(id -u):\$(id -g) $INCOMING_DIR/"
     echo ""
     if [ "${REAPER_ASSUME_YES:-0}" = "1" ]; then

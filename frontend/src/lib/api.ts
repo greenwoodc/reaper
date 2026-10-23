@@ -9,95 +9,112 @@ import type {
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5001";
 
-async function handle<T>(res: Response): Promise<T> {
+// Every endpoint either answers quickly or hands back a job id to poll, so
+// anything slower than this means the backend is wedged or unreachable.
+const REQUEST_TIMEOUT_MS = 30_000;
+
+/** An error from the backend, carrying its HTTP status and optional `code`
+ * (e.g. "playlist_exists") so callers can offer a specific recovery. */
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly code?: string,
+  ) {
+    super(message);
+  }
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}${path}`, {
+      cache: "no-store",
+      ...init,
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+  } catch (err) {
+    const timedOut = err instanceof DOMException && err.name === "TimeoutError";
+    throw new ApiError(
+      timedOut
+        ? `The Reaper backend at ${API_BASE} didn't respond in time.`
+        : `Can't reach the Reaper backend at ${API_BASE}. Is it running?`,
+      0,
+    );
+  }
   const data = await res.json().catch(() => null);
   if (!res.ok) {
-    const message = (data && (data as { error?: string }).error) || `Request failed (${res.status})`;
-    throw new Error(message);
+    const body = (data ?? {}) as { error?: string; code?: string };
+    throw new ApiError(body.error || `Request failed (${res.status})`, res.status, body.code);
   }
   return data as T;
 }
 
-export async function listPlaylists(): Promise<PlaylistSummary[]> {
-  const res = await fetch(`${API_BASE}/api/playlists`, { cache: "no-store" });
-  return handle(res);
+const postJson = (body: unknown): RequestInit => ({
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify(body),
+});
+
+export function listPlaylists(): Promise<PlaylistSummary[]> {
+  return request("/api/playlists");
 }
 
 export async function deletePlaylist(slug: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/playlists/${slug}`, { method: "DELETE" });
-  await handle(res);
+  await request(`/api/playlists/${slug}`, { method: "DELETE" });
 }
 
-export async function uploadAndScan(opts: {
+export function uploadAndScan(opts: {
   file: File;
   name?: string;
   rankCol?: string;
+  /** Overwrite an existing playlist with the same name. */
+  replace?: boolean;
 }): Promise<Job> {
   const form = new FormData();
   form.append("csv", opts.file);
   if (opts.name) form.append("name", opts.name);
   if (opts.rankCol) form.append("rank_col", opts.rankCol);
-
-  const res = await fetch(`${API_BASE}/api/playlists`, {
-    method: "POST",
-    body: form,
-  });
-  return handle(res);
+  if (opts.replace) form.append("replace", "1");
+  return request("/api/playlists", { method: "POST", body: form });
 }
 
-export async function getJob(jobId: string): Promise<Job> {
-  const res = await fetch(`${API_BASE}/api/jobs/${jobId}`, { cache: "no-store" });
-  return handle(res);
+export function getJob(jobId: string): Promise<Job> {
+  return request(`/api/jobs/${jobId}`);
 }
 
-export async function getJobLog(jobId: string): Promise<{ log: string[] }> {
-  const res = await fetch(`${API_BASE}/api/jobs/${jobId}/log`, { cache: "no-store" });
-  return handle(res);
+export function getJobLog(jobId: string): Promise<{ log: string[] }> {
+  return request(`/api/jobs/${jobId}/log`);
 }
 
-export async function confirmJob(jobId: string, confirm: boolean): Promise<Job> {
-  const res = await fetch(`${API_BASE}/api/jobs/${jobId}/confirm`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ confirm }),
-  });
-  return handle(res);
+export function confirmJob(jobId: string, confirm: boolean): Promise<Job> {
+  return request(`/api/jobs/${jobId}/confirm`, postJson({ confirm }));
 }
 
-export async function getFound(slug: string): Promise<PlaylistDetail> {
-  const res = await fetch(`${API_BASE}/api/playlists/${slug}/found`, { cache: "no-store" });
-  return handle(res);
+export function cancelJob(jobId: string): Promise<Job> {
+  return request(`/api/jobs/${jobId}/cancel`, { method: "POST" });
 }
 
-export async function getCleanupPreview(slug: string): Promise<CleanupPreview> {
-  const res = await fetch(`${API_BASE}/api/playlists/${slug}/cleanup-preview`, { cache: "no-store" });
-  return handle(res);
+export function getFound(slug: string): Promise<PlaylistDetail> {
+  return request(`/api/playlists/${slug}/found`);
 }
 
-export async function startDownload(slug: string): Promise<Job> {
-  const res = await fetch(`${API_BASE}/api/playlists/${slug}/download`, { method: "POST" });
-  return handle(res);
+export function getCleanupPreview(slug: string): Promise<CleanupPreview> {
+  return request(`/api/playlists/${slug}/cleanup-preview`);
 }
 
-export async function startFinalize(slug: string, title?: string): Promise<Job> {
-  const res = await fetch(`${API_BASE}/api/playlists/${slug}/finalize`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ title: title || undefined }),
-  });
-  return handle(res);
+export function startDownload(slug: string): Promise<Job> {
+  return request(`/api/playlists/${slug}/download`, { method: "POST" });
 }
 
-export async function getSettings(): Promise<Settings> {
-  const res = await fetch(`${API_BASE}/api/settings`, { cache: "no-store" });
-  return handle(res);
+export function startFinalize(slug: string, title?: string): Promise<Job> {
+  return request(`/api/playlists/${slug}/finalize`, postJson({ title: title || undefined }));
 }
 
-export async function updateSettings(update: SettingsUpdate): Promise<Settings> {
-  const res = await fetch(`${API_BASE}/api/settings`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(update),
-  });
-  return handle(res);
+export function getSettings(): Promise<Settings> {
+  return request("/api/settings");
+}
+
+export function updateSettings(update: SettingsUpdate): Promise<Settings> {
+  return request("/api/settings", postJson(update));
 }
