@@ -9,6 +9,24 @@
             "command": "f=$(jq -r \".tool_input.file_path // empty\"); case \"$f\" in *config.yml|*github_token.txt|*sldl.conf) echo \"{\\\"hookSpecificOutput\\\":{\\\"hookEventName\\\":\\\"PreToolUse\\\",\\\"permissionDecision\\\":\\\"deny\\\",\\\"permissionDecisionReason\\\":\\\"Blocked: file holds live credentials (gitignored) - see CLAUDE.md Secrets section.\\\"}}\";; esac"
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Users/chrisgreenwood/.local/bin/graphify hook-guard search"
+          }
+        ]
+      },
+      {
+        "matcher": "Read|Glob",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Users/chrisgreenwood/.local/bin/graphify hook-guard read"
+          }
+        ]
       }
     ]
   }
