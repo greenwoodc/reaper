@@ -10,7 +10,9 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
+import threading
 import time
 from pathlib import Path
 
@@ -25,7 +27,7 @@ from core.create_playlist import create_or_update_playlist
 from core.settings import get_settings, update_settings, read_media_root, read_puid, read_pgid
 from core.subsonic import make_api_get
 
-from backend.jobs import jobs
+from backend.jobs import jobs, JobCancelled
 
 api_bp = Blueprint("api", __name__, url_prefix="/api")
 
@@ -76,12 +78,14 @@ def _navidrome_playlist_names() -> set | None:
     rather than "not in Navidrome", so a transient outage doesn't make every
     playlist look falsely unimported."""
     try:
-        api_get = make_api_get(load_config())
+        api_get = make_api_get(load_config(), timeout=3)
         resp = api_get("getPlaylists.view", {})
-        playlists = resp.get("subsonic-response", {}).get("playlists", {}).get("playlist", [])
-        return {pl.get("name") for pl in playlists}
     except Exception:
         return None
+    if not resp:  # reachable, but rejected the request (e.g. bad credentials)
+        return None
+    playlists = resp.get("subsonic-response", {}).get("playlists", {}).get("playlist", [])
+    return {pl.get("name") for pl in playlists}
 
 
 def _resolve_playlist_dir(slug: str) -> Path | None:
@@ -196,6 +200,8 @@ def cleanup_preview(slug):
 
 def _scan_job(job, csv_path: Path, playlist_name: str, config: dict, rank_col):
     def on_progress(current, total, track):
+        if job.cancel_requested:
+            raise JobCancelled("Scan cancelled.")
         job.phase = "scanning"
         job.current = current
         job.total = total
@@ -223,13 +229,26 @@ def upload_and_scan():
     name = (request.form.get("name") or "").strip()
     rank_col = (request.form.get("rank_col") or "").strip() or None
 
-    UPLOADS_DIR.mkdir(exist_ok=True)
     safe_name = secure_filename(file.filename) or "playlist.csv"
-    csv_path = UPLOADS_DIR / safe_name
-    file.save(csv_path)
-
     playlist_name = name or Path(safe_name).stem.replace("_", " ").replace("-", " ").strip()
     slug = slugify(playlist_name)
+    if not slug:
+        return jsonify({"error": "Playlist name needs at least one letter or number."}), 400
+
+    # Same name -> same playlists/<slug>/, so a rescan would overwrite that
+    # playlist's found/missing lists. Make the user say so explicitly.
+    existing_dir = PLAYLISTS_DIR / slug
+    if (existing_dir / "found_tracks.json").exists() and request.form.get("replace") != "1":
+        existing_name = _read_meta(existing_dir).get("playlist_name", playlist_name)
+        return jsonify({
+            "error": f"A playlist called “{existing_name}” already exists. Scanning again "
+                     "replaces its found and missing lists.",
+            "code": "playlist_exists",
+        }), 409
+
+    UPLOADS_DIR.mkdir(exist_ok=True)
+    csv_path = UPLOADS_DIR / safe_name
+    file.save(csv_path)
 
     config = load_config()
     job = jobs.create(kind="scan", playlist_slug=slug, playlist_name=playlist_name)
@@ -256,11 +275,20 @@ def _stream_subprocess(job, args, cwd, extra_env=None, total_tracks=None):
 
     proc = subprocess.Popen(
         args, cwd=cwd, env=env,
+        stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1,
+        start_new_session=True,
     )
+    job.proc = proc
+    last_line = ""
+    last_problem = ""
     for line in proc.stdout:
         line = line.rstrip("\n")
         job.append_log(line)
+        if line.strip():
+            last_line = line.strip()
+            if _PROBLEM_LINE_RE.search(line):
+                last_problem = line.strip()
 
         core_m = _CORE_PROGRESS_RE.match(line)
         song_m = _SONG_STATUS_RE.match(line) if not core_m else None
@@ -298,7 +326,18 @@ def _stream_subprocess(job, args, cwd, extra_env=None, total_tracks=None):
             job.total = total_tracks
 
     proc.wait()
-    return proc.returncode
+    job.proc = None
+    return proc.returncode, _clean_failure_line(last_problem or last_line)
+
+
+# Lines worth showing as the reason a script failed, rather than its exit code.
+_PROBLEM_LINE_RE = re.compile(r'❌|error|not found|denied|no such file|cannot|failed to', re.IGNORECASE)
+
+
+def _clean_failure_line(line: str) -> str:
+    # "./download_missing.sh: line 69: docker: command not found" -> "docker: command not found"
+    line = re.sub(r'^\S+\.sh: line \d+: ', '', line)
+    return line.lstrip("❌⚠️ ").strip()[:300]
 
 
 def _download_job(job, slug: str, playlist_name: str, assume_yes: bool):
@@ -318,6 +357,9 @@ def _download_job(job, slug: str, playlist_name: str, assume_yes: bool):
         job.result = {"skipped": True, "total_tracks": 0}
         return
 
+    if job.cancel_requested:
+        raise JobCancelled("Download cancelled.")
+
     mismatch, uid, gid = _check_uid_gid_mismatch()
     if mismatch and not assume_yes:
         job.status = "awaiting_confirmation"
@@ -336,21 +378,27 @@ def _download_job(job, slug: str, playlist_name: str, assume_yes: bool):
     job.message = "Starting Soulseek download session..."
 
     extra_env = {"REAPER_ASSUME_YES": "1"} if assume_yes else {}
-    rc = _stream_subprocess(
-        job, ["./download_missing.sh", "--playlist", playlist_name],
+    # --slug: pass the folder name rather than letting the script re-derive
+    # it from the display name — its bash slugify doesn't match Python's for
+    # names with apostrophes, slashes, " - " or accents ("90's Mix").
+    rc, detail = _stream_subprocess(
+        job, ["./download_missing.sh", "--playlist", playlist_name, "--slug", slug],
         cwd=".", extra_env=extra_env, total_tracks=total_tracks,
     )
+    if job.cancel_requested:
+        _cleanup_cancelled_download()
+        raise JobCancelled("Download cancelled.")
     if rc != 0:
-        raise RuntimeError(f"download_missing.sh exited with code {rc}")
+        raise RuntimeError(f"Download failed: {detail}" if detail else f"download_missing.sh exited with code {rc}")
 
     job.phase = "importing"
     job.current = 0
     job.total = 0
     job.message = "Importing downloaded files with beets..."
 
-    rc = _stream_subprocess(job, ["./move_to_library.sh"], cwd=".")
+    rc, detail = _stream_subprocess(job, ["./move_to_library.sh"], cwd=".")
     if rc != 0:
-        raise RuntimeError(f"move_to_library.sh exited with code {rc}")
+        raise RuntimeError(f"Import failed: {detail}" if detail else f"move_to_library.sh exited with code {rc}")
 
     job.phase = "done"
     job.message = "Download and import complete."
@@ -372,6 +420,13 @@ def start_download(slug):
         return jsonify({
             "error": "A download is already in progress — Soulseek only supports one "
                      "session at a time. Wait for it to finish before starting another."
+        }), 409
+
+    wait = round(jobs.download_cooldown_until - time.time())
+    if wait > 0:
+        return jsonify({
+            "error": f"A download was just cancelled. Wait {wait}s so Soulseek registers "
+                     "the disconnect before starting another."
         }), 409
 
     job = jobs.create(kind="download", playlist_slug=slug, playlist_name=playlist_name)
@@ -397,6 +452,13 @@ def confirm_job(job_id):
         return jsonify({
             "error": "A download is already in progress — Soulseek only supports one "
                      "session at a time. Wait for it to finish before starting another."
+        }), 409
+
+    wait = round(jobs.download_cooldown_until - time.time())
+    if job.kind == "download" and wait > 0:
+        return jsonify({
+            "error": f"A download was just cancelled. Wait {wait}s so Soulseek registers "
+                     "the disconnect before starting another."
         }), 409
 
     new_job = jobs.create(kind=job.kind, playlist_slug=job.playlist_slug, playlist_name=job.playlist_name)
@@ -470,6 +532,66 @@ def start_finalize(slug):
 
     job = jobs.create(kind="finalize", playlist_slug=slug, playlist_name=playlist_name)
     jobs.run_in_background(job, _finalize_job, slug, playlist_name, title)
+    return jsonify(job.to_public_dict())
+
+
+# ── Cancel ─────────────────────────────────────────────────────────────────────
+
+def _cleanup_cancelled_download():
+    """Best-effort teardown after a cancelled download: the cancel signal
+    skips download_missing.sh's own cleanup, so remove any leftover sockseek
+    container and the staged CSV here, then start the Soulseek cooldown."""
+    try:
+        ids = subprocess.run(
+            ["docker", "ps", "-aq", "--filter", "label=com.docker.compose.service=sldl"],
+            capture_output=True, text=True, timeout=15,
+        ).stdout.split()
+        if ids:
+            subprocess.run(["docker", "rm", "-f", *ids], capture_output=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        pass
+    Path("config/active_search.csv").unlink(missing_ok=True)
+    jobs.download_cooldown_until = time.time() + 30
+
+
+def _stop_process_group(proc):
+    """SIGINT first (what Ctrl+C would send — docker compose run forwards it
+    to the container), escalating to SIGTERM then SIGKILL if it hangs."""
+    for sig, grace in ((signal.SIGINT, 15), (signal.SIGTERM, 10), (signal.SIGKILL, 0)):
+        if proc.poll() is not None:
+            return
+        try:
+            os.killpg(proc.pid, sig)
+        except (ProcessLookupError, PermissionError):
+            return
+        try:
+            proc.wait(timeout=grace or None)
+        except subprocess.TimeoutExpired:
+            continue
+
+
+@api_bp.post("/jobs/<job_id>/cancel")
+def cancel_job(job_id):
+    job = jobs.get(job_id)
+    if not job:
+        return jsonify({"error": "job not found"}), 404
+    if job.status not in ("queued", "running", "awaiting_confirmation"):
+        return jsonify({"error": "job has already finished"}), 400
+    if job.kind == "finalize":
+        return jsonify({"error": "Finalize can't be cancelled once it has started."}), 400
+    if job.kind == "download" and job.phase == "importing":
+        # Killing beets mid-import can leave files half-moved between the
+        # incoming folder and the library.
+        return jsonify({"error": "The download has finished and beets is importing. "
+                                 "Let the import complete."}), 409
+
+    job.cancel_requested = True
+    if job.status == "awaiting_confirmation":
+        job.status = "error"
+        job.error = "Cancelled."
+    elif job.proc is not None:
+        threading.Thread(target=_stop_process_group, args=(job.proc,), daemon=True).start()
+    job.message = "Cancelling..."
     return jsonify(job.to_public_dict())
 
 

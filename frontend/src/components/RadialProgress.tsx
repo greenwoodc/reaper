@@ -24,10 +24,15 @@ export default function RadialProgress({
   return (
     <div className="flex flex-col items-center gap-3">
       <div
+        role="progressbar"
+        aria-label={label || "Progress"}
+        aria-valuemin={indeterminate ? undefined : 0}
+        aria-valuemax={indeterminate ? undefined : total}
+        aria-valuenow={indeterminate ? undefined : current}
         style={{ width: size, height: size }}
         className={indeterminate ? "animate-spin" : undefined}
       >
-        <svg width={size} height={size} style={{ transform: "rotate(-90deg)" }}>
+        <svg width={size} height={size} style={{ transform: "rotate(-90deg)" }} aria-hidden="true">
           <circle
             cx={size / 2}
             cy={size / 2}
@@ -46,18 +51,17 @@ export default function RadialProgress({
             strokeDasharray={circumference}
             strokeDashoffset={offset}
             strokeLinecap="round"
-            style={!indeterminate ? { transition: "stroke-dashoffset 0.4s ease" } : undefined}
+            style={
+              !indeterminate
+                ? { transition: "stroke-dashoffset 0.4s cubic-bezier(0.25, 1, 0.5, 1)" }
+                : undefined
+            }
           />
         </svg>
       </div>
       {!indeterminate && total > 0 && (
         <span className="text-sm tabular-nums text-[var(--color-muted)]">
           {current}/{total}
-        </span>
-      )}
-      {label && (
-        <span className="max-w-xs truncate text-center text-sm text-[var(--color-muted)]">
-          {label}
         </span>
       )}
     </div>

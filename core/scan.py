@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from core.config import slugify
-from core.subsonic import make_api_get
+from core.subsonic import make_api_get, NavidromeUnreachable
 from core.matching import search_navidrome
 
 REQUIRED_COLUMNS = ["Artist Name(s)", "Track Name"]
@@ -37,10 +37,16 @@ class ScanResult:
 
 def read_csv(csv_path: Path, rank_col: str | None) -> list[dict]:
     """Read Exportify CSV and return list of track dicts."""
-    with open(csv_path, newline='', encoding='utf-8-sig') as f:
-        reader = csv.DictReader(f)
-        rows = list(reader)
-        fieldnames = reader.fieldnames or []
+    try:
+        with open(csv_path, newline='', encoding='utf-8-sig') as f:
+            reader = csv.DictReader(f)
+            rows = list(reader)
+            fieldnames = reader.fieldnames or []
+    except (UnicodeDecodeError, csv.Error) as exc:
+        raise MissingColumnsError(
+            "That file isn't a readable CSV (it looks like binary or a non-UTF-8 "
+            "file). Reaper expects an Exportify-format export (Spotify playlist → CSV)."
+        ) from exc
 
     missing_cols = [c for c in REQUIRED_COLUMNS if c not in fieldnames]
     if missing_cols:
@@ -112,15 +118,21 @@ def run_scan(
 
     slug = slugify(playlist_name)
     playlist_dir = Path("playlists") / slug
-    playlist_dir.mkdir(parents=True, exist_ok=True)
-
     found_file = playlist_dir / "found_tracks.json"
     missing_file = playlist_dir / "missing_tracks.csv"
 
     threshold = config["match_threshold"]
     api_get = make_api_get(config)
 
+    # Validate the CSV and the Navidrome connection before touching disk, so
+    # a failed scan doesn't leave an empty playlists/<slug>/ behind (which
+    # the dashboard would list as a phantom "0 found · 0 missing" playlist).
     tracks = read_csv(csv_path, rank_col)
+    ping = api_get("ping.view", {})  # raises NavidromeUnreachable if it's down
+    if ping.get("subsonic-response", {}).get("status") != "ok":
+        raise NavidromeUnreachable(
+            "Navidrome rejected the login. Check the username and password in Settings."
+        )
     existing_found_uris, existing_missing_titles = load_existing(found_file, missing_file)
 
     found, missing = [], []
@@ -158,6 +170,7 @@ def run_scan(
         existing_missing_titles=existing_missing_titles,
     )
 
+    playlist_dir.mkdir(parents=True, exist_ok=True)
     with open(found_file, "w") as f:
         json.dump(found, f, indent=2)
 
