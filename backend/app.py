@@ -29,10 +29,15 @@ from backend.routes import api_bp  # noqa: E402  (must follow chdir/sys.path set
 # localhost/127.0.0.1 (running the frontend on your own machine), also allow
 # private LAN ranges and Tailscale's CGNAT range (100.64.0.0/10) since the
 # frontend now also runs on the homelab server, reached over Tailscale from
-# other devices.
+# other devices. Also allow home-network hostnames: *.home.arpa (e.g. the
+# frontend behind a Caddy reverse proxy at reaper.home.arpa) and Tailscale
+# MagicDNS names (*.ts.net) — an IP-only list blocked those via CORS, which
+# the browser reports as a plain network failure ("can't reach backend").
 FRONTEND_ORIGIN_REGEX = (
     r"^https?://("
     r"localhost|127\.0\.0\.1"
+    r"|(?:[a-z0-9-]+\.)+home\.arpa"
+    r"|(?:[a-z0-9-]+\.)+ts\.net"
     r"|10(?:\.\d{1,3}){3}"
     r"|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2}"
     r"|192\.168(?:\.\d{1,3}){2}"
