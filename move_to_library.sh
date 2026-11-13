@@ -32,6 +32,17 @@ echo "► Running beets import on: $INCOMING_DIR"
 echo "  (duplicates will be skipped and cleaned up automatically)"
 echo ""
 
+# beets 2.x moved MusicBrainz out of core into a plugin that must be listed
+# under `plugins:`. Without it every lookup returns 0 candidates and quiet
+# mode silently skips every file, leaving them orphaned in incoming — so fail
+# loudly instead.
+BEET_VERSION_OUT="$(beet version)"
+BEET_MAJOR="$(sed -n 's/^beets version \([0-9]*\).*/\1/p' <<<"$BEET_VERSION_OUT")"
+if [ "${BEET_MAJOR:-0}" -ge 2 ] && ! grep -qE '^plugins:.*\bmusicbrainz\b' <<<"$BEET_VERSION_OUT"; then
+    echo "✗ beets ${BEET_MAJOR}.x has no MusicBrainz metadata source enabled — add 'musicbrainz' to 'plugins:' in your beets config (beet config -p), or every import will be skipped." >&2
+    exit 1
+fi
+
 rm -f ~/.config/beets/state.pickle
 beet import -q --singletons "$INCOMING_DIR"
 
