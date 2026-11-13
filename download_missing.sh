@@ -172,13 +172,18 @@ cd "$SCRIPT_DIR"
 # reason to abort the whole script before cleanup/cooldown run. Capture the
 # real exit code via PIPESTATUS instead of letting `set -e` kill us here.
 set +e
-# Verified argument: --max-retries limits endless loop behaviors on locked users
+# --max-retries is how many download attempts a track gets (across different
+# peers) before it's marked failed. At 1, a single peer rejecting the transfer
+# (e.g. "Verification required") failed even popular tracks with many other
+# sources. Endless loops on locked/rejecting users are already bounded by
+# sockseek's --fails-to-ignore (default 2), which ignores a user's shares
+# after repeated failures, so a modest retry count is safe.
 docker compose run --rm --no-deps sldl \
     -c /config/sldl.conf \
     "/config/active_search.csv" \
     --artist-col "artist" \
     --title-col  "title" \
-    --max-retries 1 \
+    --max-retries 5 \
     2>&1 | stdbuf -oL tee "$PLAYLIST_DIR/download_log.txt"
 SLDL_EXIT_CODE=${PIPESTATUS[0]}
 set -e
